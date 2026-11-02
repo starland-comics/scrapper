@@ -1,42 +1,37 @@
 import requests
-import json
 
-# Эндпоинт для линии (прематч), судя по документации - с /line/top/
-url = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events?vids%5B%5D="
+# ID Галатасарая из твоего лога
+team_sb_id = 158
+team_br_id = 3061
+
+# Варианты URL, которые использует Олимп
+urls_to_test = [
+    f"https://www.olimp.bet/api/v4/0/team/{team_sb_id}/image",
+    f"https://www.olimp.bet/api/v4/0/team/{team_br_id}/image",
+    f"https://static.olimp.bet/team/{team_sb_id}.png",
+    f"https://www.olimp.bet/img/team/{team_sb_id}.png"
+]
+
 headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-try:
-    response = requests.get(url, headers=headers, timeout=15)
-    print(f"Статус: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        found = False
+for url in urls_to_test:
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        content_type = response.headers.get('Content-Type', '')
         
-        for sport_data in data:
-            sport = sport_data.get("payload", {}).get("sport", {})
-            
-            # Ищем футбол (ID "1" или название "Футбол")
-            if sport.get("id") == "1" or sport.get("name") == "Футбол":
-                print("✅ НАЙДЕН ФУТБОЛ В ЛИНИИ!")
-                comps = sport_data.get("payload", {}).get("competitionsWithEvents", [])
-                
-                if comps:
-                    # Берем первый турнир и первый матч для примера
-                    first_event = comps[0]["events"][0]
-                    print("\n📋 СТРУКТУРА МАТЧА (ЛОГОТИПЫ + КОЭФФИЦИЕНТЫ):")
-                    print(json.dumps(first_event, indent=2, ensure_ascii=False))
-                    found = True
-                    break
+        print(f"URL: {url}")
+        print(f"   Статус: {response.status_code}")
+        print(f"   Тип контента: {content_type}")
         
-        if not found:
-            print("⚠️ Футбол не найден в линии. Возможно, нужно передать другой параметр vids.")
-            
-    else:
-        print("Ответ сервера:", response.text[:500])
-        
-except Exception as e:
-    print(f"Ошибка: {e}")
+        # Если это картинка (PNG или JPEG) - мы победили!
+        if 'image' in content_type:
+            print(f"   ✅ УСПЕХ! Это логотип. Размер: {len(response.content)} байт")
+        else:
+            print(f"   ❌ Это не картинка (наверное, JSON или HTML)")
+        print("-" * 30)
+    except Exception as e:
+        print(f"URL: {url}")
+        print(f"   ❌ Ошибка: {e}")
+        print("-" * 30)
