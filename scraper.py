@@ -18,7 +18,6 @@ WHITELIST = [
     (["россия", "фнл"], "ФНЛ"),
     (["англия", "премьер-лига"], "АПЛ"),
     (["испания", "ла лига"], "Ла Лига"),
-    (["испания", "примера"], "Ла Лига"),
     (["испания", "сегунда"], "Ла Лига 2"),
     (["италия", "серия а"], "Серия А"),
     (["германия", "бундеслига"], "Бундеслига"),
@@ -36,9 +35,10 @@ WHITELIST = [
     (["лига наций"], "Лига Наций"),
 ]
 
-# Жесткий черный список (отсекаем баскетбол, женщин, дубли)
+# ДОБАВЛЕНЫ НИЗШИЕ ДИВИЗИОНЫ ИСПАНИИ И ДРУГОЙ МУСОР
 BLACKLIST = [
     "женщины", "жен.", "u21", "u19", "u20", "u23", "юнош", "молодеж", "молодёж", "резерв",
+    "ла лига 2", "ла лига 3", "примера rfef", "сегунда b", "терсера", 
     "бундеслига 2", "бундеслига 3", "бундеслига-2", "бундеслига-3",
     "серия b", "серия c", "серия d", "истмиан", "северная", "южная", "восточная", "западная",
     "регион", "любител", "товарищеск", "баскетбол", "волейбол", "хоккей", "теннис", "кибер",
@@ -49,11 +49,11 @@ def get_clean_league(raw_name):
     if not raw_name or not isinstance(raw_name, str): return None
     name = raw_name.lower().strip()
     
-    # Отсекаем мусор
+    # Сначала отсекаем мусор
     for bad in BLACKLIST:
         if bad in name: return None
             
-    # Проверяем белый список
+    # Потом ищем в белом списке
     for keywords, clean in WHITELIST:
         if all(kw in name for kw in keywords): return clean
     
@@ -104,33 +104,23 @@ async def main():
     events = data.get("events", [])
     print(f"🔍 Всего событий: {len(events)}")
     
-    # 1. Берем лиги СТРОГО из футбольного раздела (parentId == 1)
     league_map = {}
     for s in data.get("sports", []):
         if not isinstance(s, dict): continue
         if s.get("kind") != "segment": continue
-        if s.get("parentId") != 1: continue # <--- ТОЛЬКО ФУТБОЛ!
+        if s.get("parentId") != 1: continue # Только футбол
         
         sid = s.get("id")
         sname = s.get("name")
         if sid and sname: league_map[int(sid)] = sname
     
-    print(f"📋 Футбольных сегментов: {len(league_map)}")
-    
-    # 2. Фильтруем
     valid_leagues = {}
     for lid, raw_name in league_map.items():
         clean = get_clean_league(raw_name)
         if clean: valid_leagues[lid] = clean
     
     print(f"✅ Целевых лиг: {len(valid_leagues)}")
-    if valid_leagues: print(f"   {', '.join(sorted(set(valid_leagues.values())))}")
-    else:
-        print("⚠️ Лиги не найдены. Первые 10:")
-        for lid, lname in list(league_map.items())[:10]: print(f"   {lid}: {lname}")
-        return
     
-    # 3. Отбираем матчи (окно 7 дней)
     now = time.time()
     valid_events = []
     for ev in events:
@@ -145,7 +135,6 @@ async def main():
     print(f"⚽ Матчей: {len(valid_events)}")
     if not valid_events: return
     
-    # 4. Кэфы
     sem = asyncio.Semaphore(20)
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
     results = await asyncio.gather(*tasks)
@@ -169,8 +158,3 @@ async def main():
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches)
         print(f"🔥 Успешно сохранено!")
-    else:
-        print("⚠️ Кэфов не найдено.")
-
-if __name__ == "__main__":
-    asyncio.run(main())
