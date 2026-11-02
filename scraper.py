@@ -7,8 +7,9 @@ from curl_cffi import requests as cffi_requests
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 
-OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events"
-OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events?vids%5B%5D="
+# ФУТБОЛ = vids[]=1, чтобы не тянуть всю линию по всем видам спорта
+OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events?vids%5B%5D=1"
+OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events?vids%5B%5D=1"
 
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 
@@ -22,98 +23,42 @@ FOTMOB_HEADERS = {
 }
 
 TEAM_OVERRIDES = {
-    "Байер 04": "Bayer Leverkusen",
-    "Майнц 05": "Mainz",
-    "Интер Милан": "Inter",
-    "Комо": "Como",
-    "Атлетик Бильбао": "Athletic Bilbao",
-    "Флитвуд Таун": "Fleetwood Town",
-    "Суонси Сити": "Swansea City",
-    "Рексэм": "Wrexham",
-    "Кардифф Сити": "Cardiff City",
-    "Виктория БА": "Viktoria Plzen",
-    "Эльферсберг": "Elversberg",
-    "Унион Берлин": "Union Berlin",
-    "Шальке 04": "Schalke 04",
-    "Хольштайн Киль": "Holstein Kiel",
-    "Левски София": "Levski Sofia",
-    "Неймеген": "NEC Nijmegen",
-    "Юнион Сен-Жиллуаз": "Union St. Gilloise",
-    "Арарат-Армения": "Ararat-Armenia",
-    "Хапоэль Беэр-Шева": "Hapoel Be'er Sheva",
-    "Лех Познан": "Lech Poznan",
-    "Линкольн Ред Импс": "Lincoln Red Imps",
-    "Хайдук Сплит": "Hajduk Split",
-    "Интер Эскальдес": "Inter Club d'Escaldes",
-    "Мьельбю": "Mjallby",
-    "Унив. Крайова": "Universitatea Craiova",
-    "Эгнатия": "Egnatia",
-    "Иберия 1999": "Iberia 1999",
-    "Синт-Трёйден": "Sint-Truiden",
-    "Кауно Жальгирис": "Kauno Zalgiris",
-    "Аль-Сиб": "Al-Sib",
-    "Аль-Шорта": "Al-Shorta",
-    "Аль-Кадисия Хубар": "Al-Qadsiah",
-    "Шанхай Порт": "Shanghai Port",
-    "Джохор Дарул Такзим": "Johor Darul Ta'zim",
-    "Конган": "Khon Kaen",
-    "Кёто Санга": "Kyoto Sanga",
-    "Порт": "Porto",
-    "Эстеглаль Тегеран": "Esteghlal",
-    "Аль-Шамаль": "Al-Shamal",
-    "Аль-Хиляль Рияд": "Al-Hilal",
-    "Шабаб Аль-Ахли Дубай": "Shabab Al-Ahli",
-    "Шахтёр Донецк": "Shakhtar Donetsk",
-    "Спортинг Лиссабон": "Sporting CP",
-    "Слован Братислава": "Slovan Bratislava",
-    "Сабах Баку": "Sabah",
-    "ПСВ Эйндховен": "PSV",
-    "Спарта Роттердам": "Sparta Rotterdam",
-    "Алверка": "Alverca",
-    "Виктория Гимарайнш": "Vitoria Guimaraes",
-    "Каза Пиа": "Casa Pia",
-    "Эштрелла Амадора": "Estrela Amadora",
-    "Волна Ковернино": "Volna",
-    "Волга Ульяновск": "Volga Ulyanovsk",
-    "Динамо Махачкала": "Dinamo Makhachkala",
-    "Локомотив Москва": "Lokomotiv Moscow",
-    "Родина": "Rodina Moscow",
-    "Акрон": "Akron Tolyatti",
-    "ЦСКА Москва": "CSKA Moscow",
-    "Спартак Москва": "Spartak Moscow",
-    "Динамо Москва": "Dinamo Moscow",
-    "Арсенал Тула": "Arsenal Tula",
-    "Торпедо Москва": "Torpedo Moscow",
-    "Текстильщик Иваново": "Tekstilshchik",
-    "Велес Москва": "Veles",
-    "Аль-Холуд": "Al-Kholood",
-    "Аль-Халидж": "Al-Khaleej",
-    "Абха": "Abha",
-    "Аль-Шабаб Рияд": "Al-Shabab",
-    "Аль-Рияд": "Al-Riyadh",
-    "Аль-Наср Рияд": "Al-Nassr",
-    "Неом": "Neom",
-    "Аль-Дирийя": "Al-Diriyah",
-    "ДС Юнайтед": "DC United",
-    "Нью-Йорк Ред Буллс": "New York Red Bulls",
-    "Атланта Юнайтед": "Atlanta United",
-    "Интер Майами": "Inter Miami",
-    "Нью-Ингланд Революшн": "New England Revolution",
-    "Филадельфия Юнион": "Philadelphia Union",
-    "Ванкувер Уайткэпс": "Vancouver Whitecaps",
-    "Колорадо Рэпидс": "Colorado Rapids",
-    "Сан-Диего": "San Diego FC",
-    "Лос-Анджелес Гэлакси": "LA Galaxy",
-    "Остин": "Austin FC",
-    "Миннесота Юнайтед": "Minnesota United",
-    "Сан-Хосе Эрктвейкс": "San Jose Earthquakes",
-    "Сент-Луис Сити": "St. Louis City",
-    "Коджаелиспор": "Kocaelispor",
-    "Амедспор": "Amedspor",
-    "Истанбул Башакшехир": "Istanbul Basaksehir",
-    "Эрзурумспор": "Erzurumspor",
-    "Чурум": "Corum",
-    "Альянспор": "Alyanspor"
+    "Байер 04": "Bayer Leverkusen", "Майнц 05": "Mainz", "Интер Милан": "Inter",
+    "Комо": "Como", "Атлетик Бильбао": "Athletic Bilbao", "Флитвуд Таун": "Fleetwood Town",
+    "Суонси Сити": "Swansea City", "Рексэм": "Wrexham", "Кардифф Сити": "Cardiff City",
+    "Виктория БА": "Viktoria Plzen", "Эльферсберг": "Elversberg", "Унион Берлин": "Union Berlin",
+    "Шальке 04": "Schalke 04", "Хольштайн Киль": "Holstein Kiel", "Левски София": "Levski Sofia",
+    "Неймеген": "NEC Nijmegen", "Юнион Сен-Жиллуаз": "Union St. Gilloise", "Арарат-Армения": "Ararat-Armenia",
+    "Хапоэль Беэр-Шева": "Hapoel Be'er Sheva", "Лех Познан": "Lech Poznan",
+    "Линкольн Ред Импс": "Lincoln Red Imps", "Хайдук Сплит": "Hajduk Split",
+    "Интер Эскальдес": "Inter Club d'Escaldes", "Мьельбю": "Mjallby", "Унив. Крайова": "Universitatea Craiova",
+    "Эгнатия": "Egnatia", "Иберия 1999": "Iberia 1999", "Синт-Трёйден": "Sint-Truiden",
+    "Кауно Жальгирис": "Kauno Zalgiris", "Аль-Сиб": "Al-Sib", "Аль-Шорта": "Al-Shorta",
+    "Аль-Кадисия Хубар": "Al-Qadsiah", "Шанхай Порт": "Shanghai Port", "Джохор Дарул Такзим": "Johor Darul Ta'zim",
+    "Конган": "Khon Kaen", "Кёто Санга": "Kyoto Sanga", "Порт": "Porto",
+    "Эстеглаль Тегеран": "Esteghlal", "Аль-Шамаль": "Al-Shamal", "Аль-Хиляль Рияд": "Al-Hilal",
+    "Шабаб Аль-Ахли Дубай": "Shabab Al-Ahli", "Шахтёр Донецк": "Shakhtar Donetsk",
+    "Спортинг Лиссабон": "Sporting CP", "Слован Братислава": "Slovan Bratislava",
+    "Сабах Баку": "Sabah", "ПСВ Эйндховен": "PSV", "Спарта Роттердам": "Sparta Rotterdam",
+    "Алверка": "Alverca", "Виктория Гимарайнш": "Vitoria Guimaraes", "Каза Пиа": "Casa Pia",
+    "Эштрелла Амадора": "Estrela Amadora", "Волна Ковернино": "Volna", "Волга Ульяновск": "Volga Ulyanovsk",
+    "Динамо Махачкала": "Dinamo Makhachkala", "Локомотив Москва": "Lokomotiv Moscow",
+    "Родина": "Rodina Moscow", "Акрон": "Akron Tolyatti", "ЦСКА Москва": "CSKA Moscow",
+    "Спартак Москва": "Spartak Moscow", "Динамо Москва": "Dinamo Moscow",
+    "Арсенал Тула": "Arsenal Tula", "Торпедо Москва": "Torpedo Moscow",
+    "Текстильщик Иваново": "Tekstilshchik", "Велес Москва": "Veles",
+    "Аль-Холуд": "Al-Kholood", "Аль-Халидж": "Al-Khaleej", "Абха": "Abha",
+    "Аль-Шабаб Рияд": "Al-Shabab", "Аль-Рияд": "Al-Riyadh", "Аль-Наср Рияд": "Al-Nassr",
+    "Неом": "Neom", "Аль-Дирийя": "Al-Diriyah", "ДС Юнайтед": "DC United",
+    "Нью-Йорк Ред Буллс": "New York Red Bulls", "Атланта Юнайтед": "Atlanta United",
+    "Интер Майами": "Inter Miami", "Нью-Ингланд Революшн": "New England Revolution",
+    "Филадельфия Юнион": "Philadelphia Union", "Ванкувер Уайткэпс": "Vancouver Whitecaps",
+    "Колорадо Рэпидс": "Colorado Rapids", "Сан-Диего": "San Diego FC",
+    "Лос-Анджелес Гэлакси": "LA Galaxy", "Остин": "Austin FC",
+    "Миннесота Юнайтед": "Minnesota United", "Сан-Хосе Эрктвейкс": "San Jose Earthquakes",
+    "Сент-Луис Сити": "St. Louis City", "Коджаелиспор": "Kocaelispor",
+    "Амедспор": "Amedspor", "Истанбул Башакшехир": "Istanbul Basaksehir",
+    "Эрзурумспор": "Erzurumspor", "Чурум": "Corum", "Альянспор": "Alyanspor"
 }
 
 BLACKLIST_WORDS = ["люб", "жен", "u21", "u19", "u20", "юнош", "молод", "угл", "жк", "кк", "статистика"]
@@ -143,12 +88,18 @@ def search_fotmob_logo(team_name):
     return ""
 
 def fetch_olimp_matches(url):
-    try:
-        r = cffi_requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=15)
-        if r.status_code == 200:
-            return r.json()
-    except Exception as e:
-        print(f"⚠️ Ошибка Olimpbet: {e}")
+    # 3 попытки с большим таймаутом
+    for attempt in range(3):
+        try:
+            print(f"   Попытка {attempt + 1}/3...")
+            r = cffi_requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=60)
+            if r.status_code == 200:
+                return r.json()
+            else:
+                print(f"   ⚠️ Статус {r.status_code}")
+        except Exception as e:
+            print(f"   ⚠️ Ошибка попытки {attempt + 1}: {str(e)[:100]}")
+            time.sleep(2)
     return []
 
 async def firebase_get(path):
@@ -172,9 +123,13 @@ async def main():
     logo_cache = await firebase_get("team_logos") or {}
     print(f"📥 В кэше логотипов: {len(logo_cache)}")
 
-    print("📥 Загружаю матчи с Olimpbet...")
+    print("📥 Загружаю LIVE с Olimpbet...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
+    print(f"   Получено групп: {len(live_data) if live_data else 0}")
+    
+    print("📥 Загружаю ЛИНИЮ с Olimpbet...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
+    print(f"   Получено групп: {len(line_data) if line_data else 0}")
     
     all_matches = []
     
@@ -235,12 +190,10 @@ async def main():
         score = "VS"
         status_str = status_type
         if status_type == "LIVE":
-            # Исправленный парсинг счёта
             score1 = ev.get("score1", ev.get("liveScore1", 0))
             score2 = ev.get("score2", ev.get("liveScore2", 0))
             score = f"{score1} : {score2}"
             
-            # Исправленный парсинг минуты
             minute = ev.get("time", ev.get("liveTime", ""))
             if minute:
                 status_str = f"LIVE {minute}'"
