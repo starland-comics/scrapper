@@ -7,7 +7,7 @@ from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
-SPORTSDBS = "https://www.thesportsdb.com/api/v1/json/3"
+FOTMOB_BASE = "https://www.fotmob.com/api/data"
 
 FONBET_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -15,15 +15,11 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-RU_EN = {
-    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh',
-    'з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o',
-    'п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts',
-    'ч':'ch','ш':'sh','щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+FOTMOB_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Referer": "https://www.fotmob.com/",
 }
-
-def transliterate(text):
-    return ''.join(RU_EN.get(c.lower(), c) for c in text)
 
 WHITELIST = [
     (["россия", "премьер-лига"], "РПЛ"),
@@ -73,6 +69,30 @@ def get_fonbet_data_sync(url):
     except Exception: pass
     return None
 
+def search_fotmob_sync(team_name):
+    """Ищет команду в FotMob и возвращает URL логотипа."""
+    try:
+        # FotMob search endpoint
+        query = urllib.parse.quote(team_name)
+        url = f"https://apigw.fotmob.com/searchapi/suggest?term={query}&lang=ru"
+        
+        r = cffi_requests.get(url, headers=FOTMOB_HEADERS, impersonate="chrome120", timeout=10)
+        if r.status_code != 200:
+            return None
+        
+        data = r.json()
+        suggestions = data.get("suggestions", [])
+        
+        for sugg in suggestions:
+            # Ищем тип "team"
+            if sugg.get("type") == "team":
+                team_id = sugg.get("id")
+                if team_id:
+                    return f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
+    except Exception:
+        pass
+    return None
+
 async def firebase_get(path):
     try:
         async with httpx.AsyncClient() as client:
@@ -88,41 +108,19 @@ async def firebase_put(path, data):
     except Exception:
         pass
 
-async def search_sportsdb(client, query):
-    try:
-        url = f"{SPORTSDBS}/searchteams.php?t={urllib.parse.quote(query)}"
-        resp = await client.get(url, timeout=8.0)
-        if resp.status_code == 200:
-            data = resp.json()
-            teams = data.get("teams") or []
-            for team in teams:
-                logo = team.get("strTeamBadge") or team.get("strTeamLogo")
-                if logo and logo.startswith("http"):
-                    return logo
-    except Exception:
-        pass
-    return None
-
-async def get_team_logo(client, name, cache):
-    if not name: return ""
-    if name in cache and cache[name]:
-        return cache[name]
+async def get_team_logo(team_name, cache):
+    if not team_name: return ""
+    if team_name in cache and cache[team_name]:
+        return cache[team_name]
     
-    # 1. Try original Russian name
-    logo = await search_sportsdb(client, name)
-    
-    # 2. Try transliterated name
-    if not logo:
-        en = transliterate(name)
-        if en and en != name:
-            logo = await search_sportsdb(client, en)
+    logo = await asyncio.to_thread(search_fotmob_sync, team_name)
     
     if logo:
-        cache[name] = logo
-        print(f"  ✅ {name}")
+        cache[team_name] = logo
+        print(f"  ✅ {team_name}")
     else:
-        cache[name] = ""
-        print(f"  ⚠️ {name} (не найдено)")
+        cache[team_name] = ""
+        print(f"  ⚠️ {team_name}")
     
     return logo or ""
 
@@ -217,13 +215,11 @@ async def main():
     print(f"🔎 Нужно найти логотипов: {len(missing_teams)}")
     
     if missing_teams:
-        print("⏳ Ищу логотипы (это займет несколько минут при первом запуске)...")
-        async with httpx.AsyncClient() as client:
-            for i, team in enumerate(missing_teams):
-                await get_team_logo(client, team, logo_cache)
-                # Пауза 2 сек между командами (лимит SportsDB: 30 запросов/мин)
-                if i < len(missing_teams) - 1:
-                    await asyncio.sleep(2.0)
+        print("⏳ Ищу логотипы в FotMob...")
+        for i, team in enumerate(missing_teams):
+            await get_team_logo(team, logo_cache)
+            if i < len(missing_teams) - 1:
+                await asyncio.sleep(0.5)  # Пауза 0.5 сек
     
     print("✅ Поиск логотипов завершен")
     
