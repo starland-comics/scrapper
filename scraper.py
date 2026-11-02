@@ -62,43 +62,59 @@ def get_fonbet_data_sync(url):
     except Exception: pass
     return None
 
-# --- АВТОПЕРЕВОДЧИК (Google без API-ключа) ---
 def translate_en_to_ru(text):
     try:
-        # Убираем лишние суффиксы, которые мешают поиску (например, FC, FK)
         clean_text = text.replace(" FC", "").replace("FK ", "").replace(" CF", "").strip()
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q={urllib.parse.quote(clean_text)}"
         r = cffi_requests.get(url, timeout=5)
         if r.status_code == 200:
             data = r.json()
             ru_name = data[0][0][0]
-            # Убираем лишние приставки городов, если они есть (Зенит Санкт-Петербург -> Зенит)
             ru_name = ru_name.replace(" Санкт-Петербург", "").replace(" Москва", "").replace(" Казань", "").strip()
             return ru_name
     except Exception:
         pass
     return text
 
-async def fetch_api_football_teams(client, league_id):
+async def fetch_api_football_teams(client, league_id, season):
+    """Пробует разные сезоны, если базовый не работает."""
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
-    params = {"league": league_id, "season": 2024}
-    try:
-        resp = await client.get(f"{API_FOOTBALL_BASE}/teams", headers=headers, params=params, timeout=20.0)
-        if resp.status_code == 200:
+    for s in [season, 2024, 2023, 2025]:
+        params = {"league": league_id, "season": s}
+        try:
+            resp = await client.get(f"{API_FOOTBALL_BASE}/teams", headers=headers, params=params, timeout=20.0)
+            if resp.status_code != 200:
+                print(f"      ⚠️ API вернул {resp.status_code} (сезон {s})")
+                continue
+            
             data = resp.json()
+            # Проверка на ошибки в ответе
+            errors = data.get("errors")
+            if errors and isinstance(errors, dict) and len(errors) > 0:
+                print(f"      ⚠️ Ошибка API (сезон {s}): {errors}")
+                continue
+            
             teams = data.get("response", [])
+            if not teams:
+                print(f"      ⚠️ Пусто (сезон {s})")
+                continue
+            
             result = {}
-            for t in teams:
+            print(f"      🔄 Перевожу {len(teams)} команд на русский...")
+            for i, t in enumerate(teams):
                 team_info = t.get("team", {})
                 name_en = team_info.get("name")
                 logo = team_info.get("logo")
                 if name_en and logo:
-                    # Переводим название на русский
                     name_ru = await asyncio.to_thread(translate_en_to_ru, name_en)
                     result[name_ru] = logo
-                    result[name_en] = logo # Оставляем и английское на всякий случай
+                    result[name_en] = logo
+                if (i + 1) % 10 == 0:
+                    print(f"         ...переведено {i + 1}/{len(teams)}")
             return result
-    except Exception: pass
+        except Exception as e:
+            print(f"      ⚠️ Исключение (сезон {s}): {e}")
+            continue
     return {}
 
 async def fetch_odds_and_score(event_id, sem):
@@ -143,11 +159,23 @@ async def main():
             if resp2.status_code == 200 and resp2.json(): fetched_leagues = resp2.json()
     except Exception: pass
     print(f"   Команд в кэше: {len(logo_cache)}")
+    print(f"   Лиг уже скачано: {len(fetched_leagues)}")
+    
+    # ЗАЩИТА ОТ БАГА: если кэш пуст, но лиги помечены скачанными — сбрасываем
+    if len(logo_cache) < 10 and len(fetched_leagues) > 0:
+        print("⚠️ Кэш пуст, но лиги помечены как скачанные. Сбрасываю список лиг...")
+        fetched_leagues = []
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.put(f"{FIREBASE_DB_URL}/fetched_leagues.json", json=[], timeout=15.0)
+        except Exception: pass
     
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
-    if not data or "events" not in data: return
+    if not data or "events" not in data: 
+        print("⚠️ Не удалось получить события Fonbet")
+        return
     
     events = data.get("events", [])
     league_map = {}
@@ -179,26 +207,30 @@ async def main():
     # Скачиваем логотипы
     async with httpx.AsyncClient() as client:
         for league_name, league_id in API_FOOTBALL_LEAGUES.items():
-            if league_name in fetched_leagues: continue
+            if league_name in fetched_leagues: 
+                print(f"⏭️ {league_name} — уже в кэше")
+                continue
             
-            print(f"📥 Загружаю и перевожу команды для лиги: {league_name}...")
-            teams = await fetch_api_football_teams(client, league_id)
+            print(f"📥 Загружаю команды для лиги: {league_name} (ID: {league_id})...")
+            teams = await fetch_api_football_teams(client, league_id, 2024)
             if teams:
                 logo_cache.update(teams)
                 fetched_leagues.append(league_name)
-                print(f"   ✅ Получено {len(teams)//2} команд")
-            await asyncio.sleep(1.0)
+                print(f"   ✅ Получено {len(teams)//2} уникальных команд")
+            else:
+                print(f"   ❌ Не удалось загрузить (проверь ключ/лигу/сезон)")
+            await asyncio.sleep(1.5)
             
     try:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/team_logos.json", json=logo_cache, timeout=30.0)
             await client.put(f"{FIREBASE_DB_URL}/fetched_leagues.json", json=fetched_leagues, timeout=30.0)
-        print("💾 Кэш сохранен в Firebase")
+        print(f"💾 Кэш сохранен в Firebase (всего {len(logo_cache)} записей)")
     except Exception: pass
     
-    # Формируем матчи (прямое совпадение по русскому названию)
     matches = {}
     found_count = 0
+    total_teams_needed = 0
     for ev, res in zip(valid_events, results):
         if not res: continue
         odds, score, status = res
@@ -206,8 +238,9 @@ async def main():
         home_logo = logo_cache.get(ev["team1"], "")
         away_logo = logo_cache.get(ev["team2"], "")
         
-        if home_logo or away_logo:
-            found_count += 1
+        total_teams_needed += 2
+        if home_logo: found_count += 1
+        if away_logo: found_count += 1
             
         matches[f"fon_{ev['id']}"] = {
             "title": f"{ev['team1']} - {ev['team2']}",
@@ -218,7 +251,7 @@ async def main():
             "start_time": ev.get("startTime"), "odds": odds,
         }
     
-    print(f"✅ Найдено логотипов для {found_count} из {len(matches)} матчей")
+    print(f"✅ Найдено логотипов: {found_count} из {total_teams_needed} команд")
     
     if matches:
         async with httpx.AsyncClient() as client:
