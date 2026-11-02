@@ -2,22 +2,17 @@ import asyncio
 import time
 import httpx
 import json
-import urllib.parse
+import base64
 from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
+LOGO_CDN = "https://static.fon.bet/team_logos"
 
 FONBET_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json",
     "Referer": "https://www.fon.bet/",
-}
-
-FOTMOB_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json",
-    "Referer": "https://www.fotmob.com/",
 }
 
 WHITELIST = [
@@ -68,28 +63,19 @@ def get_fonbet_data_sync(url):
     except Exception: pass
     return None
 
-def search_fotmob_sync(team_name):
-    """Ищет команду в FotMob и возвращает прямую ссылку на логотип."""
+def download_logo_sync(team_id):
+    """Скачивает логотип напрямую с CDN Фонбета и конвертирует в Base64."""
+    if not team_id or str(team_id) == "0": return ""
+    
+    url = f"{LOGO_CDN}/{team_id}.png"
     try:
-        query = urllib.parse.quote(team_name)
-        # Правильный эндпоинт поиска FotMob
-        url = f"https://www.fotmob.com/api/data/search/suggest?term={query}&lang=ru"
-        r = cffi_requests.get(url, headers=FOTMOB_HEADERS, impersonate="chrome120", timeout=10)
-        
-        if r.status_code == 200:
-            data = r.json()
-            # FotMob возвращает результаты в массиве "suggest"
-            suggests = data.get("suggest", [])
-            for s in suggests:
-                if s.get("type") == "team":
-                    payload = s.get("payload", {})
-                    team_id = payload.get("id")
-                    if team_id:
-                        # Прямая ссылка на CDN FotMob (без защиты от хотлинка)
-                        return f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
+        r = cffi_requests.get(url, headers=FONBET_HEADERS, impersonate="chrome120", timeout=10)
+        if r.status_code == 200 and len(r.content) > 100:
+            b64 = base64.b64encode(r.content).decode('utf-8')
+            return f"data:image/png;base64,{b64}"
     except Exception:
         pass
-    return None
+    return ""
 
 async def firebase_get(path):
     try:
@@ -106,19 +92,21 @@ async def firebase_put(path, data):
     except Exception:
         pass
 
-async def get_team_logo(team_name, cache):
-    if not team_name: return ""
-    if team_name in cache and cache[team_name]:
-        return cache[team_name]
+async def get_logo_cached(team_id, team_name, cache):
+    """Берет логотип из кэша или скачивает новый."""
+    key = str(team_id)
+    if key in cache and cache[key]:
+        return cache[key]
     
-    logo = await asyncio.to_thread(search_fotmob_sync, team_name)
+    print(f"  ⏳ Скачиваю логотип: {team_name} (ID: {team_id})...")
+    logo = await asyncio.to_thread(download_logo_sync, team_id)
     
     if logo:
-        cache[team_name] = logo
+        cache[key] = logo
         print(f"  ✅ {team_name}")
     else:
-        cache[team_name] = ""
-        print(f"  ⚠️ {team_name}")
+        cache[key] = ""
+        print(f"  ⚠️ {team_name} (не удалось скачать)")
     
     return logo or ""
 
@@ -153,12 +141,10 @@ async def fetch_odds_and_score(event_id, sem):
 async def main():
     print("🔄 [Scraper] Запуск...")
     
-    # 1. Загружаем кэш логотипов из Firebase (чтобы не искать команды каждый раз)
     print("📥 Загружаю кэш логотипов...")
     logo_cache = await firebase_get("team_logos") or {}
-    print(f"   В кэше: {len(logo_cache)} команд")
+    print(f"   В кэше: {len(logo_cache)} логотипов")
     
-    # 2. Получаем список событий с Fonbet
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
@@ -169,7 +155,6 @@ async def main():
     events = data.get("events", [])
     print(f"🔍 Всего событий: {len(events)}")
     
-    # 3. Фильтруем лиги
     league_map = {}
     for s in data.get("sports", []):
         if not isinstance(s, dict): continue
@@ -186,7 +171,6 @@ async def main():
     
     print(f"✅ Целевых лиг: {len(valid_leagues)}")
     
-    # 4. Отбираем матчи
     now = time.time()
     valid_events = []
     for ev in events:
@@ -201,30 +185,26 @@ async def main():
     print(f"⚽ Матчей: {len(valid_events)}")
     if not valid_events: return
     
-    # 5. Собираем кэфы
     sem = asyncio.Semaphore(20)
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
     results = await asyncio.gather(*tasks)
     
-    # 6. Ищем логотипы для команд, которых нет в кэше
-    unique_teams = set()
+    # Скачиваем недостающие логотипы
+    unique_teams = {}
     for ev in valid_events:
-        unique_teams.add(ev["team1"])
-        unique_teams.add(ev["team2"])
+        unique_teams[str(ev.get("team1Id", ""))] = ev["team1"]
+        unique_teams[str(ev.get("team2Id", ""))] = ev["team2"]
     
-    missing_teams = [t for t in unique_teams if not logo_cache.get(t)]
-    print(f"🔎 Нужно найти логотипов: {len(missing_teams)}")
+    missing_teams = {k: v for k, v in unique_teams.items() if k not in logo_cache or not logo_cache[k]}
+    print(f"🔎 Нужно скачать логотипов: {len(missing_teams)}")
     
     if missing_teams:
-        print("⏳ Ищу логотипы в FotMob...")
-        for i, team in enumerate(missing_teams):
-            await get_team_logo(team, logo_cache)
-            if i < len(missing_teams) - 1:
-                await asyncio.sleep(0.3) # Небольшая пауза
+        for team_id, team_name in missing_teams.items():
+            await get_logo_cached(team_id, team_name, logo_cache)
+            await asyncio.sleep(0.1) # Небольшая пауза
     
-    print("✅ Поиск логотипов завершен")
+    print("✅ Логотипы готовы")
     
-    # 7. Формируем итоговый JSON
     matches = {}
     for ev, res in zip(valid_events, results):
         if not res: continue
@@ -232,18 +212,20 @@ async def main():
         home_name = ev["team1"]
         away_name = ev["team2"]
         
+        home_id = str(ev.get("team1Id", ""))
+        away_id = str(ev.get("team2Id", ""))
+        
         matches[f"fon_{ev['id']}"] = {
             "title": f"{home_name} - {away_name}",
             "home": home_name, "away": away_name,
-            "homeLogo": logo_cache.get(home_name) or "",
-            "awayLogo": logo_cache.get(away_name) or "",
+            "homeLogo": logo_cache.get(home_id) or "",
+            "awayLogo": logo_cache.get(away_id) or "",
             "league": ev["_league"], "status": status, "score": score,
             "start_time": ev.get("startTime"), "odds": odds,
         }
     
     print(f"✅ Собрано матчей: {len(matches)}")
     
-    # 8. Сохраняем в Firebase (и матчи, и кэш логотипов)
     if matches:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches, timeout=30.0)
