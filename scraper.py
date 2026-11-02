@@ -6,6 +6,7 @@ import urllib.parse
 import os
 import hashlib
 import base64
+import re
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
@@ -19,17 +20,18 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-BLACKLIST_WORDS = [
-    "люб", "жен", "u21", "u19", "u20", "юнош", "молод", "угл", "жк", "кк",
-    "статистика", "победитель группы", "лига a", "лига b", "лига c"
-]
+# Регулярка для жесткого отсева молодежек и женского футбола
+BLACKLIST_REGEX = re.compile(
+    r'\(мол\)|\bмол\b|\bмолод\b|\bюнош\b|\bдубл\b|\bрезерв\b|\bакадем\b|\bu1[789]\b|\bu2[013]\b|\bжен\b|\bлюб\b', 
+    re.IGNORECASE
+)
+
 INTL_LEAGUE_WORDS = [
     "world cup", "euro ", "european championship", "nations",
     "copa america", "africa cup", "asian cup", "gold cup",
     "olympic", "friendly international", "confederations"
 ]
 
-# Названия стран — для отсева сборных
 COUNTRY_NAMES = {
     "russia", "germany", "france", "italy", "spain", "england", "portugal",
     "brazil", "argentina", "tunisia", "thailand", "switzerland", "austria",
@@ -50,11 +52,11 @@ COUNTRY_NAMES = {
     "шотландия", "уэльс",
 }
 
-# Прямые ID FotMob — обходят любую логику поиска и пишутся в кэш сразу
+# ИСПРАВЛЕНО: Порту = 9775 (9772 было Бенфикой)
 FOTMOB_ID_OVERRIDES = {
     "Порт": 165255,
     "Порт ФК": 165255,
-    "Порту": 9772,
+    "Порту": 9775,
     "Тун": 10191,
     "Акрон": 1068364,
     "Акрон Тольятти": 1068364,
@@ -102,8 +104,8 @@ LEAGUE_COUNTRY_HINTS = {
 }
 
 LOGO_STATS = {"fotmob": 0, "thesportsdb": 0, "apifootball": 0, "fallback": 0, "cache": 0}
+FALLBACK_TEAMS = []
 
-# ---------- УТИЛИТЫ ----------
 def _normalize(s: str) -> str:
     s = (s or "").lower().strip()
     for w in (" fc", " cf", " sc", " ac", " fk", " afc", " club", " фк", " клуб"):
@@ -120,12 +122,9 @@ def league_to_country(comp_name: str) -> str | None:
 def is_national_team(name: str, league: str = "") -> bool:
     n = _normalize(name)
     l = (league or "").lower()
-    if n in COUNTRY_NAMES:
-        return True
-    if any(w in l for w in ("national", "international", "world cup", "euro ", "nations")):
-        return True
-    if "сборная" in n or "national" in n:
-        return True
+    if n in COUNTRY_NAMES: return True
+    if any(w in l for w in ("national", "international", "world cup", "euro ", "nations")): return True
+    if "сборная" in n or "national" in n: return True
     return False
 
 def make_fallback_logo(name: str) -> str:
@@ -140,7 +139,6 @@ def make_fallback_logo(name: str) -> str:
 def _is_fallback(logo: str) -> bool:
     return isinstance(logo, str) and logo.startswith("data:image/svg")
 
-# ---------- FIREBASE-SAFE КЛЮЧИ ----------
 def _encode_key(k: str) -> str:
     if not k: return "_"
     return "b64_" + base64.urlsafe_b64encode(k.encode("utf-8")).decode("ascii").rstrip("=")
@@ -161,7 +159,6 @@ def _cache_from_fb(raw) -> dict:
     if not raw or not isinstance(raw, dict): return {}
     return {_decode_key(k): v for k, v in raw.items()}
 
-# ---------- БАТЧ-ПЕРЕВОД ----------
 def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
     if not texts: return {}
     SEP = " | "
@@ -181,13 +178,10 @@ def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
                         trans = trans.replace(w, "")
                     result[orig] = trans.strip() or orig
                 return result
-            else:
-                print(f"   ⚠️ Batch translate: parts mismatch {len(parts)} vs {len(texts)}")
-    except Exception as e:
-        print(f"   ⚠️ Batch translate error: {e}")
+    except Exception:
+        pass
     return {t: t for t in texts}
 
-# ---------- ВЫБОР КАНДИДАТА ----------
 def pick_best_candidate(cands, target_name, country_hint):
     if not cands: return None
     cands = [c for c in cands if not is_national_team(c.get("name", ""), c.get("league", ""))]
@@ -200,15 +194,12 @@ def pick_best_candidate(cands, target_name, country_hint):
         return fuzz.token_set_ratio(target, _normalize(c.get("name", ""))) * 10 + min(c.get("score", 0), 200)
 
     if country_hint:
-        matching = [c for c in cands
-                    if country_hint in (c.get("league") or "").lower()
-                    or country_hint in (c.get("country") or "").lower()]
+        matching = [c for c in cands if country_hint in (c.get("league") or "").lower() or country_hint in (c.get("country") or "").lower()]
         if matching:
             return max(matching, key=base_score)
 
     return max(cands, key=base_score)
 
-# ---------- ПОИСК ЛОГОТИПОВ ----------
 def search_fotmob_candidates(team_name: str, name_en: str) -> list[dict]:
     queries = [name_en, team_name]
     seen, out = set(), []
@@ -243,49 +234,35 @@ async def search_thesportsdb(name_en: str) -> list[dict]:
         seen.add(q)
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.get("https://www.thesportsdb.com/api/v1/json/3/searchteams.php",
-                                     params={"t": q})
+                r = await client.get("https://www.thesportsdb.com/api/v1/json/3/searchteams.php", params={"t": q})
                 if r.status_code != 200: continue
                 for t in (r.json() or {}).get("teams") or []:
                     if not t.get("strBadge"): continue
                     sport = (t.get("strSport") or "").lower()
                     if sport and sport != "soccer": continue
-                    team_name = t.get("strTeam", "")
-                    if "national" in team_name.lower(): continue
-                    out.append({"name": team_name,
-                                "league": (t.get("strLeague") or "").lower(),
-                                "country": (t.get("strCountry") or "").lower(),
-                                "logo": t.get("strBadge"),
-                                "source": "thesportsdb"})
+                    if "national" in (t.get("strTeam") or "").lower(): continue
+                    out.append({"name": t.get("strTeam", ""), "league": (t.get("strLeague") or "").lower(),
+                                "country": (t.get("strCountry") or "").lower(), "logo": t.get("strBadge"), "source": "thesportsdb"})
         except Exception:
             continue
     return out
 
 async def search_apifootball(name_en: str) -> list[dict]:
     key = os.getenv("APIFOOTBALL_KEY")
-    if not key:
-        print("   ⚠️ APIFOOTBALL_KEY не задан — пропускаю API-Football")
-        return []
+    if not key: return []
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get("https://v3.football.api-sports.io/teams",
-                                 params={"search": name_en},
-                                 headers={"x-apisports-key": key})
-            if r.status_code != 200:
-                print(f"   ⚠️ API-Football {r.status_code}: {r.text[:100]}")
-                return []
+                                 params={"search": name_en}, headers={"x-apisports-key": key})
+            if r.status_code != 200: return []
             out = []
             for item in (r.json() or {}).get("response", []):
                 t = item.get("team", {})
                 if not t.get("logo"): continue
-                out.append({"name": t.get("name", ""),
-                            "league": (t.get("country") or "").lower(),
-                            "country": (t.get("country") or "").lower(),
-                            "logo": t.get("logo"),
-                            "source": "apifootball"})
+                out.append({"name": t.get("name", ""), "league": (t.get("country") or "").lower(),
+                            "country": (t.get("country") or "").lower(), "logo": t.get("logo"), "source": "apifootball"})
             return out
-    except Exception as e:
-        print(f"   ⚠️ API-Football exception: {e}")
+    except Exception:
         return []
 
 async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: dict, force_refresh: bool = False) -> str:
@@ -297,16 +274,12 @@ async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: d
             existing = cache.get(existing_key)
             if existing and not _is_fallback(existing):
                 LOGO_STATS["cache"] += 1
-                if existing_key == team_ru and existing_key != key:
-                    cache[key] = existing
                 return existing
 
-    # Прямой ID FotMob — приоритет над всем
     fid = FOTMOB_ID_OVERRIDES.get(team_ru)
     if fid:
         logo = f"https://images.fotmob.com/image_resources/logo/teamlogo/{fid}.png"
-        cache[key] = logo
-        LOGO_STATS["fotmob"] += 1
+        cache[key] = logo; LOGO_STATS["fotmob"] += 1
         return logo
 
     name_en = name_en_map.get(team_ru) or TEAM_OVERRIDES.get(team_ru) or team_ru
@@ -327,87 +300,67 @@ async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: d
         return best["logo"]
 
     fb = make_fallback_logo(team_ru)
-    cache[key] = fb; LOGO_STATS["fallback"] += 1
+    cache[key] = fb
+    LOGO_STATS["fallback"] += 1
+    FALLBACK_TEAMS.append(team_ru)
     return fb
 
 async def search_all_logos(teams_with_league: list, cache: dict, name_en_map: dict):
-    """teams_with_league: список кортежей (team, league, force_refresh)"""
     sem = asyncio.Semaphore(20)
     async def one(team, league, force):
         async with sem:
             try:
                 await resolve_logo(team, league, cache, name_en_map, force_refresh=force)
-            except Exception as e:
-                print(f"   ⚠️ {team}: {e}")
+            except Exception:
                 hint = league_to_country(league) or ""
                 cache[f"{team}|{hint}"] = make_fallback_logo(team)
                 LOGO_STATS["fallback"] += 1
+                FALLBACK_TEAMS.append(team)
     await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
-# ---------- OLIMPBET ----------
 def fetch_olimp_matches(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json", "Accept-Encoding": "gzip, deflate"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json"}
     for attempt in range(2):
         try:
             r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=120)
             if r.status_code == 200: return r.json()
-        except Exception as e:
-            print(f"   ⚠️ Попытка {attempt + 1}: {str(e)[:100]}")
+        except Exception:
             time.sleep(1)
     return []
 
 def extract_live_score_and_time(ev: dict):
     score = None; minute = None
-
     sc = ev.get("score")
     if isinstance(sc, dict):
         s1 = sc.get("team1") or sc.get("home") or sc.get("score1")
         s2 = sc.get("team2") or sc.get("away") or sc.get("score2")
-        if s1 is not None and s2 is not None:
-            score = f"{s1} : {s2}"
-    elif isinstance(sc, str) and ":" in sc:
-        score = sc
+        if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
+    elif isinstance(sc, str) and ":" in sc: score = sc
 
     if not score:
         s1 = ev.get("score1") or ev.get("homeScore") or ev.get("team1Score")
         s2 = ev.get("score2") or ev.get("awayScore") or ev.get("team2Score")
-        if s1 is not None and s2 is not None:
-            score = f"{s1} : {s2}"
+        if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
 
     t = ev.get("time")
-    if isinstance(t, dict):
-        minute = t.get("minute") or t.get("current") or t.get("elapsed")
-    elif isinstance(t, (int, str)):
-        minute = t
-    if not minute:
-        minute = ev.get("minute") or ev.get("currentMinute") or ev.get("liveTime")
-
+    if isinstance(t, dict): minute = t.get("minute") or t.get("current") or t.get("elapsed")
+    elif isinstance(t, (int, str)): minute = t
+    if not minute: minute = ev.get("minute") or ev.get("currentMinute") or ev.get("liveTime")
     return score, str(minute) if minute is not None else None
 
 async def firebase_get(path):
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{FIREBASE_DB_URL}/{path}.json", timeout=15.0)
-            return resp.json()
-    except Exception:
-        return None
+            return (await client.get(f"{FIREBASE_DB_URL}/{path}.json", timeout=15.0)).json()
+    except Exception: return None
 
 async def firebase_put(path, data):
     try:
         async with httpx.AsyncClient() as client:
             r = await client.put(f"{FIREBASE_DB_URL}/{path}.json", json=data, timeout=60.0)
-            if r.status_code != 200:
-                print(f"   ❌ Firebase PUT {path}: {r.status_code} {r.text[:200]}")
-                return False
-            return True
-    except Exception as e:
-        print(f"   ❌ Firebase PUT {path}: {e}")
-        return False
+            return r.status_code == 200
+    except Exception: return False
 
-# ---------- MAIN ----------
 async def main():
     print("🔄 [Scraper] Запуск...")
     raw_cache = await firebase_get("team_logos") or {}
@@ -432,11 +385,11 @@ async def main():
                     for ev in comp.get("events", []):
                         t1 = ev.get("team1Name", "")
                         t2 = ev.get("team2Name", "")
-                        if t1 and t2:
-                            text = f"{t1} {t2} {comp_name}".lower()
-                            if not any(w in text for w in BLACKLIST_WORDS):
-                                all_matches.append((ev, status_type, comp_name))
-                                count += 1
+                        text_to_check = f"{t1} {t2} {comp_name}"
+                        # ЖЕСТКИЙ ОТСЕВ МОЛОДЕЖЕК И ЖЕНЩИН
+                        if t1 and t2 and not BLACKLIST_REGEX.search(text_to_check):
+                            all_matches.append((ev, status_type, comp_name))
+                            count += 1
         return count
 
     live_count = parse_olimp_data(live_data, "LIVE")
@@ -448,7 +401,6 @@ async def main():
         if sample:
             print(f"   DEBUG LIVE full: {json.dumps(sample[0], ensure_ascii=False)[:3000]}")
 
-    # Собираем пары для поиска: (team, league, force_refresh)
     missing = set()
     for ev, _, league_name in all_matches:
         for t in (ev.get("team1Name"), ev.get("team2Name")):
@@ -456,27 +408,26 @@ async def main():
             hint = league_to_country(league_name) or ""
             existing = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
             force = (t in FOTMOB_ID_OVERRIDES) or (not existing) or _is_fallback(existing)
-            if force:
-                missing.add((t, league_name, force))
+            if force: missing.add((t, league_name, force))
 
     if missing:
         print(f"🔎 Поиск логотипов для {len(missing)} пар (team, league)...")
         all_teams = list({t for t, _, _ in missing})
         name_en_map = batch_translate_ru_to_en(all_teams)
-        for team, en in TEAM_OVERRIDES.items():
-            name_en_map[team] = en
+        for team, en in TEAM_OVERRIDES.items(): name_en_map[team] = en
 
         t0 = time.time()
         await search_all_logos(list(missing), logo_cache, name_en_map)
         print(f"✅ Обработано {len(missing)} за {time.time()-t0:.1f}s")
-        print(f"📊 Источники: fotmob={LOGO_STATS['fotmob']}, "
-              f"thesportsdb={LOGO_STATS['thesportsdb']}, "
-              f"apifootball={LOGO_STATS['apifootball']}, "
-              f"fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
+        print(f"📊 Источники: fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, apifootball={LOGO_STATS['apifootball']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
 
     payload = _cache_to_fb(logo_cache)
     ok = await firebase_put("team_logos", payload)
     print(f"💾 Кэш логотипов: {len(logo_cache)} записей, ok={ok}")
+
+    # ВЫВОД КЛУБОВ, У КОТОРЫХ НЕТ ЛОГО (ДЛЯ РУЧНОГО ДОБАВЛЕНИЯ ID)
+    if FALLBACK_TEAMS:
+        print(f"🚨 БЕЗ ЛОГОТИПОВ (FALLBACK): {list(set(FALLBACK_TEAMS))}")
 
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
@@ -488,8 +439,7 @@ async def main():
 
         p1 = px = p2 = None
         for out in ev.get("outcomes", []):
-            group_name = out.get("groupName", "")
-            short_name = out.get("shortName", "")
+            group_name = out.get("groupName", ""); short_name = out.get("shortName", "")
             if "Исход" in group_name or "Результат" in group_name:
                 if short_name in ["П1", "1"]: p1 = out.get("probability")
                 elif short_name in ["X", "Х", "Ничья"]: px = out.get("probability")
@@ -500,8 +450,7 @@ async def main():
         if status_type == "LIVE":
             extracted_score, extracted_minute = extract_live_score_and_time(ev)
             if extracted_score: score = extracted_score
-            if extracted_minute:
-                status_str = f"LIVE {extracted_minute}'"
+            if extracted_minute: status_str = f"LIVE {extracted_minute}'"
 
         time_display = status_str
         if status_type == "Скоро":
@@ -511,8 +460,7 @@ async def main():
                 time_display = time.strftime("%d.%m %H:%M", dt)
 
         matches_dict[f"olimp_{ev_id}"] = {
-            "title": f"{t1} - {t2}",
-            "home": t1, "away": t2,
+            "title": f"{t1} - {t2}", "home": t1, "away": t2,
             "homeLogo": home_logo, "awayLogo": away_logo,
             "league": league_name, "status": time_display, "score": score,
             "start_time": ev.get("startDateTime"),
