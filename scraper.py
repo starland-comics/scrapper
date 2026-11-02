@@ -2,6 +2,7 @@ import asyncio
 import time
 import httpx
 import json
+import difflib
 from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
@@ -88,7 +89,7 @@ async def fetch_api_football_teams(client, league_id):
                 name = team_info.get("name")
                 logo = team_info.get("logo")
                 if name and logo:
-                    result[name] = logo
+                    result[f"api_{name}"] = logo  # Добавляем префикс api_ для защиты от мусора
             return result
     except Exception: pass
     return {}
@@ -120,6 +121,36 @@ async def fetch_odds_and_score(event_id, sem):
         status_str = f"LIVE {minute}'" if place == "live" else "Скоро"
         
         return odds, score_str, status_str
+
+# Функция нечеткого поиска логотипа
+def find_logo(team_name, cache):
+    if not team_name: return ""
+    
+    # 1. Прямое совпадение
+    if f"api_{team_name}" in cache: return cache[f"api_{team_name}"]
+    
+    trans_name = transliterate(team_name).lower().replace(" ", "")
+    best_match = ""
+    best_ratio = 0.0
+    
+    for key, logo_url in cache.items():
+        if not key.startswith("api_"): continue # Игнорируем мусор
+        api_name = key.replace("api_", "").lower().replace(" ", "")
+        
+        # 2. Прямое вхождение (если trans_name полностью входит в api_name)
+        if trans_name in api_name or api_name in trans_name:
+            return logo_url
+            
+        # 3. Нечеткое сравнение
+        ratio = difflib.SequenceMatcher(None, trans_name, api_name).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_match = logo_url
+            
+    # Порог 0.8 отсекает случайный мусор, но пропускает опечатки (например, Krylia vs Krylya)
+    if best_ratio >= 0.8:
+        return best_match
+    return ""
 
 async def main():
     print("🔄 [Scraper] Запуск...")
@@ -192,19 +223,7 @@ async def main():
         print("💾 Кэш сохранен в Firebase")
     except Exception: pass
     
-    # 3. Умный поиск логотипа
-    def find_logo(team_name):
-        # 1. Прямое совпадение
-        if team_name in logo_cache: return logo_cache[team_name]
-        
-        # 2. Поиск по транслиту (вхождение)
-        trans_name = transliterate(team_name).lower().replace(" ", "")
-        for api_name, logo_url in logo_cache.items():
-            api_name_lower = api_name.lower().replace(" ", "")
-            if trans_name in api_name_lower or api_name_lower in trans_name:
-                return logo_url
-        return ""
-
+    # 3. Формируем матчи
     matches = {}
     for ev, res in zip(valid_events, results):
         if not res: continue
@@ -212,8 +231,8 @@ async def main():
         matches[f"fon_{ev['id']}"] = {
             "title": f"{ev['team1']} - {ev['team2']}",
             "home": ev["team1"], "away": ev["team2"],
-            "homeLogo": find_logo(ev["team1"]),
-            "awayLogo": find_logo(ev["team2"]),
+            "homeLogo": find_logo(ev["team1"], logo_cache),
+            "awayLogo": find_logo(ev["team2"], logo_cache),
             "league": ev["_league"], "status": status, "score": score,
             "start_time": ev.get("startTime"), "odds": odds,
         }
