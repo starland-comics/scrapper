@@ -12,7 +12,6 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# ТВОЙ БЕЛЫЙ СПИСОК ЛИГ
 TARGET_LEAGUES = [
     "премьер-лига", "апл", "ла лига", "серия а", "бундеслига", "лига 1",
     "лига чемпионов", "лига европы", "лига конференций", "рпл", "фнл", 
@@ -59,33 +58,48 @@ async def fetch_odds_and_score(event_id, sem):
         return odds, score_str, status_str
 
 def extract_leagues(data):
+    """Бронебойный парсер: ищет лиги во всех возможных местах JSON"""
     leagues = {}
-    infos = data.get("tournamentInfos", [])
-    if isinstance(infos, dict): infos = infos.values()
-    for t in infos:
-        if isinstance(t, dict):
-            t_id = t.get("id")
-            t_name = t.get("name") or t.get("rusName")
-            if t_id and t_name:
-                leagues[t_id] = t_name
-                
+    
+    # 1. Прямой перебор всех списков в корне
+    for key, val in data.items():
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    # ID может называться id или sportId
+                    cid = item.get("id") or item.get("sportId")
+                    cname = item.get("name") or item.get("rusName")
+                    if cid and cname and isinstance(cname, str):
+                        leagues[cid] = cname
+                        
+    # 2. Перебор словарей в корне
+    for key, val in data.items():
+        if isinstance(val, dict):
+            for item in val.values():
+                if isinstance(item, dict):
+                    cid = item.get("id") or item.get("sportId")
+                    cname = item.get("name") or item.get("rusName")
+                    if cid and cname and isinstance(cname, str):
+                        leagues[cid] = cname
+
+    # 3. Копаем глубоко в sports -> regions -> competitions
     sports = data.get("sports", [])
     if isinstance(sports, dict): sports = sports.values()
     for s in sports:
         if not isinstance(s, dict): continue
-        if s.get("kind") == 1:
-            regions = s.get("regions", [])
-            if isinstance(regions, dict): regions = regions.values()
-            for r in regions:
-                if not isinstance(r, dict): continue
-                comps = r.get("competitions", [])
-                if isinstance(comps, dict): comps = comps.values()
-                for c in comps:
-                    if not isinstance(c, dict): continue
-                    c_id = c.get("id")
-                    c_name = c.get("name") or c.get("rusName")
-                    if c_id and c_name:
-                        leagues[c_id] = c_name
+        regions = s.get("regions", [])
+        if isinstance(regions, dict): regions = regions.values()
+        for r in regions:
+            if not isinstance(r, dict): continue
+            comps = r.get("competitions", [])
+            if isinstance(comps, dict): comps = comps.values()
+            for c in comps:
+                if not isinstance(c, dict): continue
+                c_id = c.get("id")
+                c_name = c.get("name") or c.get("rusName")
+                if c_id and c_name:
+                    leagues[c_id] = c_name
+                    
     return leagues
 
 def is_target_league(league_name):
@@ -106,6 +120,11 @@ async def main():
         events = data.get("events", [])
         leagues_map = extract_leagues(data)
         print(f"✅ Загружено названий лиг: {len(leagues_map)}")
+        
+        # Отладка: выводим первые 5 найденных лиг, чтобы понять, что там
+        print("📋 Пример найденных лиг:")
+        for k, v in list(leagues_map.items())[:5]:
+            print(f"   {k}: {v}")
 
         now = time.time()
         valid_events = []
@@ -113,15 +132,17 @@ async def main():
         for ev in events:
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 if ev.get("startTime", 0) > now - 10800:
-                    league_id = int(ev.get("sportId", 0))
-                    league_name = leagues_map.get(league_id, "Неизвестная лига")
+                    league_id = ev.get("sportId")
+                    league_name = leagues_map.get(league_id, "Неизвестно")
                     
-                    # ЖЕСТКИЙ ФИЛЬТР ПО БЕЛОМУ СПИСКУ
                     if is_target_league(league_name):
                         ev['league_name'] = league_name
                         valid_events.append(ev)
         
         print(f"⚽ Матчей из белого списка: {len(valid_events)}")
+        
+        if not valid_events and events:
+            print("⚠️ Не нашли матчей. Пример sportId в событиях:", set([e.get('sportId') for e in events[:10]]))
         
         sem = asyncio.Semaphore(20)
         tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
@@ -131,7 +152,6 @@ async def main():
         for ev, res in zip(valid_events, results):
             if res:
                 odds, score, status = res
-                
                 matches[f"fon_{ev['id']}"] = {
                     "title": f"{ev['team1']} - {ev['team2']}",
                     "home": ev['team1'], "away": ev['team2'],
