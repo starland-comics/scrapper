@@ -15,7 +15,7 @@ OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitio
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
-# ТВОЙ КЛЮЧ API-FOOTBALL ЗАШИТ ПРЯМО ЗДЕСЬ
+# Твой ключ API-Football
 APIFOOTBALL_KEY = "48a576d984d21c242b2dbea309b724e5"
 
 FOTMOB_HEADERS = {
@@ -23,14 +23,11 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-# МАКСИМАЛЬНО ЖЁСТКИЙ ФИЛЬТР МУСОРА
 BLACKLIST_WORDS = [
-    # Молодежки и женщины
     "люб", "жен", "u21", "u19", "u20", "юнош", "молод", "мол", "до 19", "до 21", "до 23", "дубл", "резерв", "академ",
-    # Статистика и рынки
     "угл", "жк", "кк", "статистика", "победитель группы", "лига a", "лига b", "лига c",
-    "видеопросмотр", "удары от ворот", "удары в створ", "удары по воротам", "штанги", "перекладины", 
-    "ауты", "офсайды", "фолы", "голы", "мед. бригад", "хозяева", "гости", "тотал", "фора", 
+    "видеопросмотр", "удары от ворот", "удары в створ", "удары по воротам", "штанги", "перекладины",
+    "ауты", "офсайды", "фолы", "голы", "мед. бригад", "хозяева", "гости", "тотал", "фора",
     "обе забьют", "пенальти", "карточк"
 ]
 
@@ -60,10 +57,18 @@ COUNTRY_NAMES = {
     "шотландия", "уэльс",
 }
 
+# Прямые ID FotMob для проблемных клубов
 FOTMOB_ID_OVERRIDES = {
-    "Порт": 165255, "Порт ФК": 165255, "Порту": 9775, 
+    "Порт": 165255, "Порт ФК": 165255, "Порту": 9775,
     "Тун": 10191, "Акрон": 1068364, "Акрон Тольятти": 1068364,
     "Родина": 1066681, "Родина Москва": 1066681,
+    "Истанбул Башакшехир": 10068,
+    "Атлетик Бильбао": 9807,
+    "Синт-Трёйден": 10232,
+    "Эштрела Амадора": 14303,
+    "Витория Гимарайнш": 9778,
+    "Витория БА": 9779,
+    "Нью-Йорк Ред Буллс": 9805,
 }
 
 TEAM_OVERRIDES = {
@@ -86,7 +91,19 @@ TEAM_OVERRIDES = {
     "Саламанка УДС": "Salamanca UDS", "Реус Реддис": "Reus", "Волна Ковернино": "Volna",
     "Конган": "Khon Kaen", "Сабах Баку": "Sabah", "Истанбул Башакшехир": "Istanbul Basaksehir",
     "Унив. Крайова": "Universitatea Craiova", "Интер Эскальдес": "Inter Club d'Escaldes",
-    "Эштрела Амора": "Estrela Amadora", "Риу Аве": "Rio Ave"
+    "Эштрела Амадора": "Estrela Amadora",
+    # Низшие лиги — английские названия для поиска
+    "Солсбери": "Salisbury FC",
+    "Алвчерч": "Alvechurch FC",
+    "Йовил Таун": "Yeovil Town",
+    "Галифакс Таун": "Halifax Town",
+    "Таранкон": "Tarazona",
+    "Стаффорд Рейнджерс": "Stafford Rangers",
+    "Вустер Сити": "Worcester City",
+    "Рашден & Даймондс": "Rushden & Diamonds",
+    "Хорнчерч": "Hornchurch",
+    "Олтринчэм": "Altrincham",
+    "Харборо Таун": "Harborough Town",
 }
 
 LEAGUE_COUNTRY_HINTS = {
@@ -169,7 +186,6 @@ def _cache_from_fb(raw) -> dict:
     if not raw or not isinstance(raw, dict): return {}
     return {_decode_key(k): v for k, v in raw.items()}
 
-# БАТЧ-ПЕРЕВОД С ЧАНКАМИ (по 40 штук)
 def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
     if not texts: return {}
     result = {}
@@ -264,20 +280,29 @@ async def search_thesportsdb(name_en: str) -> list[dict]:
     return out
 
 async def search_apifootball(name_en: str) -> list[dict]:
-    if not APIFOOTBALL_KEY: return []
+    if not APIFOOTBALL_KEY:
+        print("   ⚠️ APIFOOTBALL_KEY пустой")
+        return []
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get("https://v3.football.api-sports.io/teams",
                                  params={"search": name_en}, headers={"x-apisports-key": APIFOOTBALL_KEY})
-            if r.status_code != 200: return []
+            if r.status_code != 200:
+                print(f"   ⚠️ API-Football {r.status_code}: {r.text[:100]}")
+                return []
+            data = r.json()
+            if "errors" in data and data["errors"]:
+                print(f"   ⚠️ API-Football errors: {data['errors']}")
+                return []
             out = []
-            for item in (r.json() or {}).get("response", []):
+            for item in data.get("response", []):
                 t = item.get("team", {})
                 if not t.get("logo"): continue
                 out.append({"name": t.get("name", ""), "league": (t.get("country") or "").lower(),
                             "country": (t.get("country") or "").lower(), "logo": t.get("logo"), "source": "apifootball"})
             return out
-    except Exception:
+    except Exception as e:
+        print(f"   ⚠️ API-Football exception: {e}")
         return []
 
 async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: dict, force_refresh: bool = False) -> str:
