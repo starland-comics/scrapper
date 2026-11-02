@@ -15,22 +15,10 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# ID лиг в API-Football
 API_FOOTBALL_LEAGUES = {
-    "РПЛ": 235,
-    "АПЛ": 39,
-    "Чемпионшип": 40,
-    "Ла Лига": 140,
-    "Ла Лига 2": 141,
-    "Серия А": 135,
-    "Бундеслига": 78,
-    "Лига 1": 61,
-    "Эредивизи": 88,
-    "Примейра": 94,
-    "MLS": 253,
-    "Лига Чемпионов": 2,
-    "Лига Европы": 3,
-    "Лига Конференций": 848,
+    "РПЛ": 235, "АПЛ": 39, "Чемпионшип": 40, "Ла Лига": 140, "Ла Лига 2": 141,
+    "Серия А": 135, "Бундеслига": 78, "Лига 1": 61, "Эредивизи": 88,
+    "Примейра": 94, "MLS": 253, "Лига Чемпионов": 2, "Лига Европы": 3, "Лига Конференций": 848,
 }
 
 WHITELIST = [
@@ -65,6 +53,11 @@ BLACKLIST = [
     "борьб", "бокс", "мма", "ufc", "футзал", "пляжный",
 ]
 
+RU_EN = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
+
+def transliterate(text):
+    return ''.join(RU_EN.get(c.lower(), c) for c in text)
+
 def get_clean_league(raw_name):
     if not raw_name or not isinstance(raw_name, str): return None
     name = raw_name.lower().strip()
@@ -82,9 +75,8 @@ def get_fonbet_data_sync(url):
     return None
 
 async def fetch_api_football_teams(client, league_id):
-    """Запрашивает все команды лиги через API-Football и возвращает словарь {название: логотип}."""
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
-    params = {"league": league_id, "season": 2024}  # 2024 — текущий сезон, можно изменить при необходимости
+    params = {"league": league_id, "season": 2024}
     try:
         resp = await client.get(f"{API_FOOTBALL_BASE}/teams", headers=headers, params=params, timeout=20.0)
         if resp.status_code == 200:
@@ -98,8 +90,7 @@ async def fetch_api_football_teams(client, league_id):
                 if name and logo:
                     result[name] = logo
             return result
-    except Exception:
-        pass
+    except Exception: pass
     return {}
 
 async def fetch_odds_and_score(event_id, sem):
@@ -133,118 +124,101 @@ async def fetch_odds_and_score(event_id, sem):
 async def main():
     print("🔄 [Scraper] Запуск...")
     
-    # 1. Загружаем кэш логотипов из Firebase
-    print("📥 Загружаю кэш логотипов из Firebase...")
+    # 1. Загружаем кэши
+    print("📥 Загружаю кэш...")
     logo_cache = {}
+    fetched_leagues = []
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{FIREBASE_DB_URL}/team_logos.json", timeout=15.0)
-            if resp.status_code == 200 and resp.json():
-                logo_cache = resp.json()
-    except Exception:
-        pass
-    print(f"   В кэше: {len(logo_cache)} команд")
+            if resp.status_code == 200 and resp.json(): logo_cache = resp.json()
+            
+            resp2 = await client.get(f"{FIREBASE_DB_URL}/fetched_leagues.json", timeout=15.0)
+            if resp2.status_code == 200 and resp2.json(): fetched_leagues = resp2.json()
+    except Exception: pass
+    print(f"   Команд в кэше: {len(logo_cache)}")
+    print(f"   Лиг скачано: {len(fetched_leagues)}")
     
-    # 2. Получаем события с Фонбета
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
-    if not data or "events" not in data: 
-        print("⚠️ Не удалось получить список событий.")
-        return
+    if not data or "events" not in data: return
     
     events = data.get("events", [])
-    print(f"🔍 Всего событий: {len(events)}")
-    
     league_map = {}
     for s in data.get("sports", []):
-        if not isinstance(s, dict): continue
-        if s.get("kind") != "segment": continue
-        if s.get("parentId") != 1: continue
-        sid = s.get("id")
-        sname = s.get("name")
-        if sid and sname: league_map[int(sid)] = sname
+        if isinstance(s, dict) and s.get("kind") == "segment" and s.get("parentId") == 1:
+            if s.get("id") and s.get("name"): league_map[int(s["id"])] = s["name"]
     
     valid_leagues = {}
     for lid, raw_name in league_map.items():
         clean = get_clean_league(raw_name)
         if clean: valid_leagues[lid] = clean
     
-    print(f"✅ Целевых лиг: {len(valid_leagues)}")
-    
     now = time.time()
     valid_events = []
     for ev in events:
         if ev.get("kind") != 1 or not ev.get("team1") or not ev.get("team2"): continue
-        start = ev.get("startTime", 0)
-        if not (now - 10800 < start < now + 604800): continue 
-        sport_id = ev.get("sportId")
-        if sport_id not in valid_leagues: continue
-        ev["_league"] = valid_leagues[sport_id]
+        if not (now - 10800 < ev.get("startTime", 0) < now + 604800): continue 
+        if ev.get("sportId") not in valid_leagues: continue
+        ev["_league"] = valid_leagues[ev["sportId"]]
         valid_events.append(ev)
     
     print(f"⚽ Матчей: {len(valid_events)}")
     if not valid_events: return
     
-    # 3. Собираем кэфы
     sem = asyncio.Semaphore(20)
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
     results = await asyncio.gather(*tasks)
     
-    # 4. Загружаем логотипы из API-Football для нужных лиг (если их еще нет в кэше)
+    # 2. Скачиваем логотипы ТОЛЬКО для тех лиг, которых еще нет в fetched_leagues
     async with httpx.AsyncClient() as client:
         for league_name, league_id in API_FOOTBALL_LEAGUES.items():
-            # Проверяем, есть ли уже логотипы для этой лиги в кэше (по названию команды)
-            # Простой признак: если в кэше меньше 10 команд с этой лиги, загружаем
-            # (упрощенно, чтобы не усложнять код)
-            if len([k for k in logo_cache if k]) < 50: # Если кэш почти пуст, грузим все
-                print(f"📥 Загружаю команды для лиги: {league_name} (ID: {league_id})...")
-                teams = await fetch_api_football_teams(client, league_id)
-                if teams:
-                    logo_cache.update(teams)
-                    print(f"   ✅ Получено {len(teams)} команд")
-                await asyncio.sleep(1.0)  # Пауза между запросами
-    
-    # Сохраняем обновленный кэш в Firebase
+            if league_name in fetched_leagues: continue
+            
+            print(f"📥 Загружаю команды для лиги: {league_name}...")
+            teams = await fetch_api_football_teams(client, league_id)
+            if teams:
+                logo_cache.update(teams)
+                fetched_leagues.append(league_name)
+                print(f"   ✅ Получено {len(teams)} команд")
+            await asyncio.sleep(1.0)
+            
+    # Сохраняем кэши
     try:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/team_logos.json", json=logo_cache, timeout=30.0)
-        print("💾 Кэш логотипов сохранен в Firebase")
-    except Exception:
-        pass
+            await client.put(f"{FIREBASE_DB_URL}/fetched_leagues.json", json=fetched_leagues, timeout=30.0)
+        print("💾 Кэш сохранен в Firebase")
+    except Exception: pass
     
-    # 5. Формируем матчи
-    # Простая транслитерация для поиска в кэше
-    RU_EN = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
-    def transliterate(text):
-        return ''.join(RU_EN.get(c.lower(), c) for c in text)
-    
+    # 3. Умный поиск логотипа
+    def find_logo(team_name):
+        # 1. Прямое совпадение
+        if team_name in logo_cache: return logo_cache[team_name]
+        
+        # 2. Поиск по транслиту (вхождение)
+        trans_name = transliterate(team_name).lower().replace(" ", "")
+        for api_name, logo_url in logo_cache.items():
+            api_name_lower = api_name.lower().replace(" ", "")
+            if trans_name in api_name_lower or api_name_lower in trans_name:
+                return logo_url
+        return ""
+
     matches = {}
     for ev, res in zip(valid_events, results):
         if not res: continue
         odds, score, status = res
-        home_name = ev["team1"]
-        away_name = ev["team2"]
-        league = ev["_league"]
-        
-        # Ищем логотипы в кэше по английскому названию
-        home_en = transliterate(home_name)
-        away_en = transliterate(away_name)
-        
-        home_logo = logo_cache.get(home_name) or logo_cache.get(home_en) or ""
-        away_logo = logo_cache.get(away_name) or logo_cache.get(away_en) or ""
-        
         matches[f"fon_{ev['id']}"] = {
-            "title": f"{home_name} - {away_name}",
-            "home": home_name, "away": away_name,
-            "homeLogo": home_logo,
-            "awayLogo": away_logo,
-            "league": league, "status": status, "score": score,
+            "title": f"{ev['team1']} - {ev['team2']}",
+            "home": ev["team1"], "away": ev["team2"],
+            "homeLogo": find_logo(ev["team1"]),
+            "awayLogo": find_logo(ev["team2"]),
+            "league": ev["_league"], "status": status, "score": score,
             "start_time": ev.get("startTime"), "odds": odds,
         }
     
     print(f"✅ Собрано матчей: {len(matches)}")
-    
     if matches:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches, timeout=30.0)
