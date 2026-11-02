@@ -122,8 +122,10 @@ async def main():
     for ev in events:
         if ev.get("kind") != 1 or not ev.get("team1") or not ev.get("team2"): continue
         start = ev.get("startTime", 0)
-        # Окно 3 дня (вместо 7), чтобы не делать 1000 запросов
-        if not (now - 10800 < start < now + 259200): continue 
+        
+        # ОКНО В 7 ДНЕЙ (604800 секунд)
+        if not (now - 10800 < start < now + 604800): continue 
+        
         sport_id = ev.get("sportId")
         if sport_id not in valid_leagues: continue
         ev["_league"] = valid_leagues[sport_id]
@@ -134,7 +136,7 @@ async def main():
         print("⚠️ Матчей нет.")
         return
     
-    print("⏳ Начинаю скачивать кэфы (это займет 10-30 секунд)...")
+    print("⏳ Начинаю скачивать кэфы (это займет 10-60 секунд)...")
     
     sem = asyncio.Semaphore(20)
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
