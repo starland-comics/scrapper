@@ -14,36 +14,30 @@ def get_data(url):
         return r.json()
     return None
 
+def find_id(data, target_id, path=""):
+    if isinstance(data, dict):
+        if data.get("id") == target_id or data.get("sportId") == target_id:
+            print(f"📍 Найдено по пути: {path}")
+            print(json.dumps(data, ensure_ascii=False, indent=2)[:800])
+        for k, v in data.items():
+            find_id(v, target_id, f"{path}.{k}")
+    elif isinstance(data, list):
+        for i, v in enumerate(data):
+            find_id(v, target_id, f"{path}[{i}]")
+
 async def main():
+    print("🔍 Ищем ID 11935 (РПЛ) во всем JSON...")
     data = await asyncio.to_thread(get_data, f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru")
-    if not data: 
-        print("Нет данных")
-        return
     
-    # Собираем карту лиг
-    league_map = {}
-    for t in data.get("tournamentInfos", []):
-        if isinstance(t, dict) and t.get("id") and t.get("caption"):
-            league_map[int(t["id"])] = t["caption"]
-            
-    print(f"Лиг в справочнике: {len(league_map)}")
+    find_id(data, 11935)
     
+    print("\n🔍 Ищем sportId 11935 в событиях...")
     events = data.get("events", [])
-    foot_events = [ev for ev in events if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2")]
-    print(f"Футбольных событий: {len(foot_events)}")
-    
-    sids = set(ev.get("sportId") for ev in foot_events)
-    print(f"Уникальных sportId: {len(sids)}")
-    
-    # Смотрим, какие sportId есть в league_map
-    found = [sid for sid in sids if sid in league_map]
-    print(f"Из них есть в league_map: {len(found)}")
-    
-    print("\nПримеры футбольных событий:")
-    for ev in foot_events[:15]:
-        sid = ev.get("sportId")
-        lname = league_map.get(sid, "НЕТ В СПРАВОЧНИКЕ")
-        print(f"  sportId={sid} | Лига: {lname} | {ev.get('team1')} - {ev.get('team2')}")
+    for ev in events:
+        if ev.get("sportId") == 11935:
+            print("Пример события с sportId=11935:")
+            print(json.dumps(ev, ensure_ascii=False, indent=2))
+            break
 
 if __name__ == "__main__":
     asyncio.run(main())
