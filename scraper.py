@@ -7,7 +7,6 @@ from curl_cffi import requests as cffi_requests
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 
-# ПРАВИЛЬНЫЕ ЭНДПОИНТЫ ОЛИМПА
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events?vids%5B%5D="
 
@@ -17,14 +16,107 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json"
 }
-
 FOTMOB_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://www.fotmob.com/"
 }
 
-# Фильтр мусора
-BLACKLIST_WORDS = ["люб", "жен", "u21", "u19", "u20", "юнош", "молод"]
+TEAM_OVERRIDES = {
+    "Байер 04": "Bayer Leverkusen",
+    "Майнц 05": "Mainz",
+    "Интер Милан": "Inter",
+    "Комо": "Como",
+    "Атлетик Бильбао": "Athletic Bilbao",
+    "Флитвуд Таун": "Fleetwood Town",
+    "Суонси Сити": "Swansea City",
+    "Рексэм": "Wrexham",
+    "Кардифф Сити": "Cardiff City",
+    "Виктория БА": "Viktoria Plzen",
+    "Эльферсберг": "Elversberg",
+    "Унион Берлин": "Union Berlin",
+    "Шальке 04": "Schalke 04",
+    "Хольштайн Киль": "Holstein Kiel",
+    "Левски София": "Levski Sofia",
+    "Неймеген": "NEC Nijmegen",
+    "Юнион Сен-Жиллуаз": "Union St. Gilloise",
+    "Арарат-Армения": "Ararat-Armenia",
+    "Хапоэль Беэр-Шева": "Hapoel Be'er Sheva",
+    "Лех Познан": "Lech Poznan",
+    "Линкольн Ред Импс": "Lincoln Red Imps",
+    "Хайдук Сплит": "Hajduk Split",
+    "Интер Эскальдес": "Inter Club d'Escaldes",
+    "Мьельбю": "Mjallby",
+    "Унив. Крайова": "Universitatea Craiova",
+    "Эгнатия": "Egnatia",
+    "Иберия 1999": "Iberia 1999",
+    "Синт-Трёйден": "Sint-Truiden",
+    "Кауно Жальгирис": "Kauno Zalgiris",
+    "Аль-Сиб": "Al-Sib",
+    "Аль-Шорта": "Al-Shorta",
+    "Аль-Кадисия Хубар": "Al-Qadsiah",
+    "Шанхай Порт": "Shanghai Port",
+    "Джохор Дарул Такзим": "Johor Darul Ta'zim",
+    "Конган": "Khon Kaen",
+    "Кёто Санга": "Kyoto Sanga",
+    "Порт": "Porto",
+    "Эстеглаль Тегеран": "Esteghlal",
+    "Аль-Шамаль": "Al-Shamal",
+    "Аль-Хиляль Рияд": "Al-Hilal",
+    "Шабаб Аль-Ахли Дубай": "Shabab Al-Ahli",
+    "Шахтёр Донецк": "Shakhtar Donetsk",
+    "Спортинг Лиссабон": "Sporting CP",
+    "Слован Братислава": "Slovan Bratislava",
+    "Сабах Баку": "Sabah",
+    "ПСВ Эйндховен": "PSV",
+    "Спарта Роттердам": "Sparta Rotterdam",
+    "Алверка": "Alverca",
+    "Виктория Гимарайнш": "Vitoria Guimaraes",
+    "Каза Пиа": "Casa Pia",
+    "Эштрелла Амадора": "Estrela Amadora",
+    "Волна Ковернино": "Volna",
+    "Волга Ульяновск": "Volga Ulyanovsk",
+    "Динамо Махачкала": "Dinamo Makhachkala",
+    "Локомотив Москва": "Lokomotiv Moscow",
+    "Родина": "Rodina Moscow",
+    "Акрон": "Akron Tolyatti",
+    "ЦСКА Москва": "CSKA Moscow",
+    "Спартак Москва": "Spartak Moscow",
+    "Динамо Москва": "Dinamo Moscow",
+    "Арсенал Тула": "Arsenal Tula",
+    "Торпедо Москва": "Torpedo Moscow",
+    "Текстильщик Иваново": "Tekstilshchik",
+    "Велес Москва": "Veles",
+    "Аль-Холуд": "Al-Kholood",
+    "Аль-Халидж": "Al-Khaleej",
+    "Абха": "Abha",
+    "Аль-Шабаб Рияд": "Al-Shabab",
+    "Аль-Рияд": "Al-Riyadh",
+    "Аль-Наср Рияд": "Al-Nassr",
+    "Неом": "Neom",
+    "Аль-Дирийя": "Al-Diriyah",
+    "ДС Юнайтед": "DC United",
+    "Нью-Йорк Ред Буллс": "New York Red Bulls",
+    "Атланта Юнайтед": "Atlanta United",
+    "Интер Майами": "Inter Miami",
+    "Нью-Ингланд Революшн": "New England Revolution",
+    "Филадельфия Юнион": "Philadelphia Union",
+    "Ванкувер Уайткэпс": "Vancouver Whitecaps",
+    "Колорадо Рэпидс": "Colorado Rapids",
+    "Сан-Диего": "San Diego FC",
+    "Лос-Анджелес Гэлакси": "LA Galaxy",
+    "Остин": "Austin FC",
+    "Миннесота Юнайтед": "Minnesota United",
+    "Сан-Хосе Эрктвейкс": "San Jose Earthquakes",
+    "Сент-Луис Сити": "St. Louis City",
+    "Коджаелиспор": "Kocaelispor",
+    "Амедспор": "Amedspor",
+    "Истанбул Башакшехир": "Istanbul Basaksehir",
+    "Эрзурумспор": "Erzurumspor",
+    "Чурум": "Corum",
+    "Альянспор": "Alyanspor"
+}
+
+BLACKLIST_WORDS = ["люб", "жен", "u21", "u19", "u20", "юнош", "молод", "угл", "жк", "кк", "статистика"]
 
 def is_valid_match(team1, team2, league):
     text = f"{team1} {team2} {league}".lower()
@@ -34,8 +126,9 @@ def is_valid_match(team1, team2, league):
     return True
 
 def search_fotmob_logo(team_name):
+    search_query = TEAM_OVERRIDES.get(team_name, team_name)
     try:
-        url = f"{FOTMOB_SEARCH_URL}?term={urllib.parse.quote(team_name)}&lang=ru"
+        url = f"{FOTMOB_SEARCH_URL}?term={urllib.parse.quote(search_query)}&lang=ru"
         r = cffi_requests.get(url, headers=FOTMOB_HEADERS, impersonate="chrome120", timeout=10)
         if r.status_code == 200:
             data = r.json()
@@ -74,24 +167,21 @@ async def firebase_put(path, data):
         pass
 
 async def main():
-    print("🔄 [Scraper] Запуск гибридного парсера...")
+    print("🔄 [Scraper] Запуск...")
     
-    # 1. Загружаем кэш логотипов
     logo_cache = await firebase_get("team_logos") or {}
     print(f"📥 В кэше логотипов: {len(logo_cache)}")
 
-    # 2. Загружаем данные с Olimpbet
     print("📥 Загружаю матчи с Olimpbet...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
     
     all_matches = []
     
-    # Функция для парсинга групп (Лайв и Линия)
     def parse_olimp_data(data, status_type):
         for sport_group in data:
             sport = sport_group.get("payload", {}).get("sport", {})
-            if str(sport.get("id")) == "1":  # Футбол
+            if str(sport.get("id")) == "1":
                 comps = sport_group.get("payload", {}).get("competitionsWithEvents", [])
                 for comp in comps:
                     comp_name = comp.get("competition", {}).get("name", "Футбол")
@@ -106,7 +196,6 @@ async def main():
 
     print(f"⚽ Найдено валидных матчей: {len(all_matches)}")
 
-    # 3. Ищем недостающие логотипы в FotMob
     missing_teams = set()
     for ev, _, _ in all_matches:
         t1 = ev.get("team1Name")
@@ -124,45 +213,40 @@ async def main():
             else:
                 logo_cache[team] = ""
                 print(f"   ⚠️ {team} (не найдено)")
-            await asyncio.sleep(0.1) # Защита от бана
+            await asyncio.sleep(0.1)
 
-    # 4. Сохраняем обновленный кэш
     await firebase_put("team_logos", logo_cache)
 
-    # 5. Формируем итоговый JSON для Firebase
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
         ev_id = ev.get("id")
         t1 = ev.get("team1Name")
         t2 = ev.get("team2Name")
         
-        # Ищем коэффициенты 1X2
         p1, px, p2 = None, None, None
         for out in ev.get("outcomes", []):
             group_name = out.get("groupName", "")
             short_name = out.get("shortName", "")
-            if "Исход" in group_name:
-                if short_name == "П1": p1 = out.get("probability")
-                elif short_name == "X": px = out.get("probability")
-                elif short_name == "П2": p2 = out.get("probability")
+            if "Исход" in group_name or "Результат" in group_name:
+                if short_name in ["П1", "1"]: p1 = out.get("probability")
+                elif short_name in ["X", "Х", "Ничья"]: px = out.get("probability")
+                elif short_name in ["П2", "2"]: p2 = out.get("probability")
 
-        # Счет и время для лайва
         score = "VS"
         status_str = status_type
         if status_type == "LIVE":
-            score1 = ev.get("score1", 0)
-            score2 = ev.get("score2", 0)
+            # Исправленный парсинг счёта
+            score1 = ev.get("score1", ev.get("liveScore1", 0))
+            score2 = ev.get("score2", ev.get("liveScore2", 0))
             score = f"{score1} : {score2}"
             
-            # Ищем время
-            for out in ev.get("outcomes", []):
-                if "минута" in out.get("groupName", "").lower() or "time" in out.get("shortName", "").lower():
-                    status_str = f"LIVE {out.get('unprocessedName', '')}"
-                    break
-            if status_str == "LIVE":
-                status_str = "LIVE" # Если время не нашли
+            # Исправленный парсинг минуты
+            minute = ev.get("time", ev.get("liveTime", ""))
+            if minute:
+                status_str = f"LIVE {minute}'"
+            else:
+                status_str = "LIVE"
 
-        # Дата для прематча
         time_display = status_str
         if status_type == "Скоро":
             start_ts = ev.get("startDateTime")
@@ -182,7 +266,6 @@ async def main():
             "odds": {"1": p1, "X": px, "2": p2}
         }
 
-    # 6. Сохраняем матчи в Firebase
     if matches_dict:
         await firebase_put("matches", matches_dict)
         print(f"🔥 Успешно сохранено {len(matches_dict)} матчей в Firebase!")
