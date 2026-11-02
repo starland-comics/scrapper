@@ -1,198 +1,49 @@
 import asyncio
-import time
-import httpx
 import json
 from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
-FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
-
-FONBET_HEADERS = {
+HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json",
     "Referer": "https://www.fon.bet/",
 }
 
-WHITELIST = [
-    (["россия", "премьер-лига"], "РПЛ"),
-    (["россия", "фнл"], "ФНЛ"),
-    (["англия", "премьер-лига"], "АПЛ"),
-    (["испания", "ла лига"], "Ла Лига"),
-    (["испания", "сегунда"], "Ла Лига 2"),
-    (["италия", "серия а"], "Серия А"),
-    (["германия", "бундеслига"], "Бундеслига"),
-    (["франция", "лига 1"], "Лига 1"),
-    (["саудовская"], "Саудовская Аравия"),
-    (["нидерланды", "эредивизи"], "Эредивизи"),
-    (["португалия", "примейра"], "Примейра"),
-    (["сша", "mls"], "MLS"),
-    (["англия", "чемпионшип"], "Чемпионшип"),
-    (["лига чемпионов"], "Лига Чемпионов"),
-    (["лига европы"], "Лига Европы"),
-    (["лига конференций"], "Лига Конференций"),
-    (["чемпионат мира"], "ЧМ"),
-    (["чемпионат европы"], "ЧЕ"),
-    (["лига наций"], "Лига Наций"),
-]
-
-BLACKLIST = [
-    "женщины", "жен.", "u21", "u19", "u20", "u23", 
-    "юнош", "молодеж", "молодёж", "резерв",
-    "бундеслига 3", "бундеслига-3", "бундеслига 2",
-    "серия b", "серия c", "серия d",
-    "истмиан", "северная", "южная", "восточная", "западная",
-    "регион", "любител", "товарищеск",
-    "баскетбол", "волейбол", "хоккей", "теннис", "кибер",
-    "борьб", "бокс", "мма", "ufc",
-]
-
-def get_clean_league(raw_name):
-    if not raw_name or not isinstance(raw_name, str):
-        return None
-    name = raw_name.lower().strip()
-    
-    # Отсекаем мусор
-    for bad in BLACKLIST:
-        if bad in name:
-            return None
-            
-    # Проверяем белый список (все ключевые слова должны быть в названии)
-    for keywords, clean in WHITELIST:
-        if all(kw in name for kw in keywords):
-            return clean
-    
+def get_data(url):
+    r = cffi_requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=15)
+    if r.status_code == 200:
+        return r.json()
     return None
-
-def get_fonbet_data_sync(url):
-    try:
-        r = cffi_requests.get(url, headers=FONBET_HEADERS, impersonate="chrome120", timeout=15)
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return None
-
-async def fetch_odds_and_score(event_id, sem):
-    async with sem:
-        url = f"{BASE_URL}/events/event?eventId={event_id}&scopeMarket=1600&lang=ru"
-        data = await asyncio.to_thread(get_fonbet_data_sync, url)
-        if not data:
-            return None
-        
-        odds = {"1": None, "X": None, "2": None}
-        for cf in data.get("customFactors", []):
-            for f in cf.get("factors", []):
-                fid, v = f.get("f"), f.get("v")
-                if fid == 921: odds["1"] = v
-                elif fid == 922: odds["X"] = v
-                elif fid == 923: odds["2"] = v
-            if odds["1"] and odds["X"] and odds["2"]:
-                break
-        
-        if not odds["1"]:
-            return None
-        
-        event_info = data.get("event", {})
-        score1 = event_info.get("score1")
-        score2 = event_info.get("score2")
-        minute = event_info.get("time", "")
-        place = event_info.get("place", "line")
-        
-        score_str = f"{score1} : {score2}" if score1 is not None and place == "live" else "VS"
-        status_str = f"LIVE {minute}'" if place == "live" else "Скоро"
-        
-        return odds, score_str, status_str
 
 async def main():
-    print("🔄 [Scraper] Запуск...")
-    list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
-    data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
-    
-    if not data or "events" not in data:
-        print("⚠️ Не удалось получить список событий.")
+    data = await asyncio.to_thread(get_data, f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru")
+    if not data: 
+        print("Нет данных")
         return
     
-    events = data.get("events", [])
-    print(f"🔍 Всего событий: {len(events)}")
-    
-    # 1. Собираем карту лиг из tournamentInfos
+    # Собираем карту лиг
     league_map = {}
     for t in data.get("tournamentInfos", []):
         if isinstance(t, dict) and t.get("id") and t.get("caption"):
             league_map[int(t["id"])] = t["caption"]
             
-    print(f"📋 Лиг в справочнике: {len(league_map)}")
+    print(f"Лиг в справочнике: {len(league_map)}")
     
-    # 2. Фильтруем по Whitelist
-    valid_leagues = {}
-    for lid, raw_name in league_map.items():
-        clean = get_clean_league(raw_name)
-        if clean:
-            valid_leagues[lid] = clean
-            
-    print(f"✅ Целевых лиг: {len(valid_leagues)}")
-    if valid_leagues:
-        print("   Найдено:", ", ".join(valid_leagues.values()))
-    else:
-        print("⚠️ Не удалось отфильтровать лиги. Первые 15 названий для отладки:")
-        for lid, lname in list(league_map.items())[:15]:
-            print(f"   ID {lid}: {lname}")
-        return
+    events = data.get("events", [])
+    foot_events = [ev for ev in events if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2")]
+    print(f"Футбольных событий: {len(foot_events)}")
     
-    # 3. Отбираем матчи
-    now = time.time()
-    valid_events = []
-    for ev in events:
-        if ev.get("kind") != 1:
-            continue
-        if not ev.get("team1") or not ev.get("team2"):
-            continue
-        start = ev.get("startTime", 0)
-        if not (now - 10800 < start < now + 172800):
-            continue
-        sport_id = ev.get("sportId")
-        if sport_id not in valid_leagues:
-            continue
-        ev["_league"] = valid_leagues[sport_id]
-        valid_events.append(ev)
+    sids = set(ev.get("sportId") for ev in foot_events)
+    print(f"Уникальных sportId: {len(sids)}")
     
-    print(f"⚽ Матчей из целевых лиг: {len(valid_events)}")
+    # Смотрим, какие sportId есть в league_map
+    found = [sid for sid in sids if sid in league_map]
+    print(f"Из них есть в league_map: {len(found)}")
     
-    if not valid_events:
-        print("⚠️ Матчи не найдены. Возможно, они еще не в линии.")
-        return
-    
-    # 4. Собираем кэфы
-    sem = asyncio.Semaphore(20)
-    tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
-    results = await asyncio.gather(*tasks)
-    
-    matches = {}
-    for ev, res in zip(valid_events, results):
-        if not res:
-            continue
-        odds, score, status = res
-        matches[f"fon_{ev['id']}"] = {
-            "title": f"{ev['team1']} - {ev['team2']}",
-            "home": ev["team1"],
-            "away": ev["team2"],
-            "homeLogo": f"https://static.fon.bet/team_logos/{ev.get('team1Id')}.png",
-            "awayLogo": f"https://static.fon.bet/team_logos/{ev.get('team2Id')}.png",
-            "league": ev["_league"],
-            "status": status,
-            "score": score,
-            "start_time": ev.get("startTime"),
-            "odds": odds,
-        }
-    
-    print(f"✅ Готово к отправке: {len(matches)} матчей")
-    
-    if matches:
-        async with httpx.AsyncClient() as client:
-            await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches)
-        print(f"🔥 Успешно сохранено {len(matches)} матчей в Firebase!")
-    else:
-        print("⚠️ Кэфов не найдено.")
+    print("\nПримеры футбольных событий:")
+    for ev in foot_events[:15]:
+        sid = ev.get("sportId")
+        lname = league_map.get(sid, "НЕТ В СПРАВОЧНИКЕ")
+        print(f"  sportId={sid} | Лига: {lname} | {ev.get('team1')} - {ev.get('team2')}")
 
 if __name__ == "__main__":
     asyncio.run(main())
