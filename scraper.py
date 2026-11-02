@@ -46,12 +46,34 @@ def get_fonbet_data_sync(url):
 def get_clean_league_name(raw_name):
     if not raw_name: return None
     name = raw_name.lower()
-    if any(x in name for x in ["женщины", "u21", "u19", "юнош", "молодеж", "бундеслига 3", "бундеслига-3", "серия b", "серия c"]):
+    if any(x in name for x in ["женщины", "u21", "u19", "юнош", "молодеж", "бундеслига 3", "бундеслига-3", "серия b", "серия c", "баскетбол"]):
         return None
     for keys, _, clean_name in WHITELIST:
         if keys in name:
             return clean_name
     return None
+
+def extract_leagues_recursive(data, leagues=None):
+    """Рекурсивно ищет все пары ID-Название в любом месте JSON."""
+    if leagues is None: leagues = {}
+    
+    if isinstance(data, dict):
+        cid = data.get("id") or data.get("sportId") or data.get("competitionId")
+        cname = data.get("name") or data.get("rusName") or data.get("competition")
+        
+        if cid and isinstance(cname, str) and len(cname) > 2:
+            # Игнорируем названия видов спорта
+            if cname.lower() not in ["футбол", "баскетбол", "волейбол", "теннис", "хоккей", "киберспорт"]:
+                leagues[int(cid)] = cname
+                
+        for v in data.values():
+            extract_leagues_recursive(v, leagues)
+            
+    elif isinstance(data, list):
+        for item in data:
+            extract_leagues_recursive(item, leagues)
+            
+    return leagues
 
 async def fetch_odds_and_score(event_id, sem):
     async with sem:
@@ -91,23 +113,12 @@ async def main():
         events = data.get("events", [])
         print(f"🔍 Всего событий: {len(events)}")
 
-        # 1. Собираем все лиги из ответа
-        raw_leagues = {}
-        for t in data.get("tournamentInfos", []):
-            if isinstance(t, dict):
-                raw_leagues[int(t.get("id"))] = t.get("name") or t.get("rusName")
-                
-        for s in data.get("sports", []):
-            if isinstance(s, dict):
-                for r in s.get("regions", []):
-                    if isinstance(r, dict):
-                        for c in r.get("competitions", []):
-                            if isinstance(c, dict) and c.get("id"):
-                                raw_leagues[int(c.get("id"))] = c.get("name") or c.get("rusName")
-                                
-        # 2. Фильтруем лиги по Белому Списку
+        # Рекурсивный поиск всех возможных лиг
+        all_leagues = extract_leagues_recursive(data)
+        print(f"🔎 Всего сущностей с ID и названием: {len(all_leagues)}")
+        
         valid_leagues = {}
-        for lid, lname in raw_leagues.items():
+        for lid, lname in all_leagues.items():
             clean = get_clean_league_name(lname)
             if clean:
                 valid_leagues[lid] = clean
@@ -115,8 +126,11 @@ async def main():
         print(f"✅ Целевых лиг найдено: {len(valid_leagues)}")
         if valid_leagues:
             print(f"Примеры: {list(valid_leagues.values())[:5]}")
+        else:
+            print("Примеры всех найденных названий (для отладки):")
+            for lid, lname in list(all_leagues.items())[:10]:
+                print(f"   ID {lid}: {lname}")
 
-        # 3. Отбираем матчи
         now = time.time()
         valid_events = []
         
@@ -131,7 +145,6 @@ async def main():
         
         print(f"⚽ Матчей из целевых лиг: {len(valid_events)}")
         
-        # 4. Запрашиваем кэфы
         sem = asyncio.Semaphore(20)
         tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
         results = await asyncio.gather(*tasks)
