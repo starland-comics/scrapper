@@ -14,21 +14,146 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# Названия папок в репозитории football-logos
+# ИСПРАВЛЕНО: названия папок в точности как в репозитории
 LEAGUE_FOLDERS = {
-    "РПЛ": "Russia/Premier League",
-    "АПЛ": "England/Premier League",
-    "Чемпионшип": "England/Championship",
-    "Ла Лига": "Spain/La Liga",
-    "Ла Лига 2": "Spain/La Liga 2",
-    "Серия А": "Italy/Serie A",
-    "Бундеслига": "Germany/Bundesliga",
-    "Лига 1": "France/Ligue 1",
-    "Эредивизи": "Netherlands/Eredivisie",
-    "Примейра": "Portugal/Primeira Liga",
-    "MLS": "USA/MLS",
-    "Лига Чемпионов": "Europe/UEFA Champions League",
-    "Лига Европы": "Europe/UEFA Europa League",
+    "РПЛ": "Russia - Premier League",
+    "АПЛ": "England - Premier League",
+    "Чемпионшип": "England - Championship",
+    "Ла Лига": "Spain - La Liga",
+    "Ла Лига 2": "Spain - La Liga 2",
+    "Серия А": "Italy - Serie A",
+    "Бундеслига": "Germany - Bundesliga",
+    "Лига 1": "France - Ligue 1",
+    "Эредивизи": "Netherlands - Eredivisie",
+    "Примейра": "Portugal - Primeira Liga",
+    "MLS": "USA - MLS",
+    "Лига Чемпионов": "Europe - UEFA Champions League",
+    "Лига Европы": "Europe - UEFA Europa League",
+    # Для остальных лиг (ФНЛ, Саудовская Аравия, Лига Конференций и т.д.)
+    # в этом репозитории логотипов может не быть, поэтому они останутся с заглушками
+}
+
+# Словарь переводов названий команд с русского на английский
+# В репозитории файлы называются по-английски
+TEAM_TRANSLATIONS = {
+    # РПЛ
+    "Зенит": "Zenit",
+    "Спартак": "Spartak Moscow",
+    "ЦСКА": "CSKA Moscow",
+    "Динамо Москва": "Dynamo Moscow",
+    "Локомотив Москва": "Lokomotiv Moscow",
+    "Краснодар": "Krasnodar",
+    "Ростов": "Rostov",
+    "Рубин": "Rubin Kazan",
+    "Ахмат": "Akhmat Grozny",
+    "Крылья Советов": "Krylia Sovetov",
+    "Балтика": "Baltika",
+    "Факел": "Fakel",
+    "Оренбург": "Orenburg",
+    "Акрон": "Akron",
+    "Динамо Махачкала": "Dynamo Makhachkala",
+    "Родина Москва": "Rodina Moscow",
+    # АПЛ
+    "Арсенал": "Arsenal",
+    "Челси": "Chelsea",
+    "Ливерпуль": "Liverpool",
+    "Манчестер Сити": "Manchester City",
+    "Манчестер Юнайтед": "Manchester United",
+    "Тоттенхэм": "Tottenham",
+    "Ньюкасл": "Newcastle",
+    "Астон Вилла": "Aston Villa",
+    "Брайтон": "Brighton",
+    "Вест Хэм": "West Ham",
+    "Эвертон": "Everton",
+    "Кристал Пэлас": "Crystal Palace",
+    "Брентфорд": "Brentford",
+    "Фулхэм": "Fulham",
+    "Вулверхэмптон": "Wolves",
+    "Борнмут": "Bournemouth",
+    "Ноттингем Форест": "Nottingham Forest",
+    "Лестер": "Leicester",
+    "Ипсвич": "Ipswich",
+    "Саутгемптон": "Southampton",
+    # Ла Лига
+    "Реал Мадрид": "Real Madrid",
+    "Барселона": "Barcelona",
+    "Атлетико": "Atletico Madrid",
+    "Севилья": "Sevilla",
+    "Реал Сосьедад": "Real Sociedad",
+    "Атлетик Бильбао": "Athletic Bilbao",
+    "Вильярреал": "Villarreal",
+    "Бетис": "Real Betis",
+    "Валенсия": "Valencia",
+    "Жирона": "Girona",
+    "Осасуна": "Osasuna",
+    "Сельта": "Celta Vigo",
+    "Райо Вальекано": "Rayo Vallecano",
+    "Мальорка": "Mallorca",
+    "Лас-Пальмас": "Las Palmas",
+    "Алавес": "Alaves",
+    "Хетафе": "Getafe",
+    "Эспаньол": "Espanyol",
+    "Леганес": "Leganes",
+    "Вальядолид": "Real Valladolid",
+    # Серия А
+    "Ювентус": "Juventus",
+    "Милан": "AC Milan",
+    "Интер": "Inter",
+    "Наполи": "Napoli",
+    "Рома": "Roma",
+    "Лацио": "Lazio",
+    "Аталанта": "Atalanta",
+    "Фиорентина": "Fiorentina",
+    "Болонья": "Bologna",
+    "Торино": "Torino",
+    "Удинезе": "Udinese",
+    "Дженоа": "Genoa",
+    "Лечче": "Lecce",
+    "Кальяри": "Cagliari",
+    "Верона": "Verona",
+    "Эмполи": "Empoli",
+    "Парма": "Parma",
+    "Комо": "Como",
+    "Венеция": "Venezia",
+    "Монца": "Monza",
+    # Бундеслига
+    "Бавария": "Bayern Munich",
+    "Боруссия Дортмунд": "Borussia Dortmund",
+    "Лейпциг": "RB Leipzig",
+    "Байер": "Bayer Leverkusen",
+    "Айнтрахт Франкфурт": "Eintracht Frankfurt",
+    "Штутгарт": "Stuttgart",
+    "Фрайбург": "Freiburg",
+    "Вольфсбург": "Wolfsburg",
+    "Боруссия Мёнхенгладбах": "Borussia Monchengladbach",
+    "Майнц": "Mainz",
+    "Аугсбург": "Augsburg",
+    "Вердер": "Werder Bremen",
+    "Хоффенхайм": "Hoffenheim",
+    "Унион Берлин": "Union Berlin",
+    "Санкт-Паули": "St. Pauli",
+    "Хайденхайм": "Heidenheim",
+    "Хольштайн Киль": "Holstein Kiel",
+    "Бохум": "Bochum",
+    # Лига 1
+    "ПСЖ": "Paris Saint-Germain",
+    "Марсель": "Marseille",
+    "Монако": "Monaco",
+    "Лион": "Lyon",
+    "Лилль": "Lille",
+    "Ницца": "Nice",
+    "Ренн": "Rennes",
+    "Ланс": "Lens",
+    "Страсбур": "Strasbourg",
+    "Тулуза": "Toulouse",
+    "Монпелье": "Montpellier",
+    "Брест": "Brest",
+    "Нант": "Nantes",
+    "Реймс": "Reims",
+    "Гавр": "Le Havre",
+    "Осер": "Auxerre",
+    "Анже": "Angers",
+    "Сент-Этьен": "Saint-Etienne",
 }
 
 WHITELIST = [
@@ -163,11 +288,16 @@ async def main():
         away_name = ev["team2"]
         league = ev["_league"]
         
-        # Формируем путь к логотипу из публичного GitHub-репозитория
         league_folder = LEAGUE_FOLDERS.get(league, "")
         if league_folder:
-            home_encoded = home_name.replace(" ", "%20")
-            away_encoded = away_name.replace(" ", "%20")
+            # Переводим названия команд на английский
+            home_en = TEAM_TRANSLATIONS.get(home_name, home_name)
+            away_en = TEAM_TRANSLATIONS.get(away_name, away_name)
+            
+            # Кодируем пробелы для URL
+            home_encoded = home_en.replace(" ", "%20")
+            away_encoded = away_en.replace(" ", "%20")
+            
             home_logo = f"{LOGO_BASE_URL}/{league_folder}/{home_encoded}.png"
             away_logo = f"{LOGO_BASE_URL}/{league_folder}/{away_encoded}.png"
         else:
