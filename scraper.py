@@ -6,7 +6,8 @@ from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
-LOGO_BASE_URL = "https://raw.githubusercontent.com/luukhopman/football-logos/master/logos"
+API_FOOTBALL_KEY = "48a576d984d21c242b2dbea309b724e5"
+API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 
 FONBET_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -14,146 +15,22 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# ИСПРАВЛЕНО: названия папок в точности как в репозитории
-LEAGUE_FOLDERS = {
-    "РПЛ": "Russia - Premier League",
-    "АПЛ": "England - Premier League",
-    "Чемпионшип": "England - Championship",
-    "Ла Лига": "Spain - La Liga",
-    "Ла Лига 2": "Spain - La Liga 2",
-    "Серия А": "Italy - Serie A",
-    "Бундеслига": "Germany - Bundesliga",
-    "Лига 1": "France - Ligue 1",
-    "Эредивизи": "Netherlands - Eredivisie",
-    "Примейра": "Portugal - Primeira Liga",
-    "MLS": "USA - MLS",
-    "Лига Чемпионов": "Europe - UEFA Champions League",
-    "Лига Европы": "Europe - UEFA Europa League",
-    # Для остальных лиг (ФНЛ, Саудовская Аравия, Лига Конференций и т.д.)
-    # в этом репозитории логотипов может не быть, поэтому они останутся с заглушками
-}
-
-# Словарь переводов названий команд с русского на английский
-# В репозитории файлы называются по-английски
-TEAM_TRANSLATIONS = {
-    # РПЛ
-    "Зенит": "Zenit",
-    "Спартак": "Spartak Moscow",
-    "ЦСКА": "CSKA Moscow",
-    "Динамо Москва": "Dynamo Moscow",
-    "Локомотив Москва": "Lokomotiv Moscow",
-    "Краснодар": "Krasnodar",
-    "Ростов": "Rostov",
-    "Рубин": "Rubin Kazan",
-    "Ахмат": "Akhmat Grozny",
-    "Крылья Советов": "Krylia Sovetov",
-    "Балтика": "Baltika",
-    "Факел": "Fakel",
-    "Оренбург": "Orenburg",
-    "Акрон": "Akron",
-    "Динамо Махачкала": "Dynamo Makhachkala",
-    "Родина Москва": "Rodina Moscow",
-    # АПЛ
-    "Арсенал": "Arsenal",
-    "Челси": "Chelsea",
-    "Ливерпуль": "Liverpool",
-    "Манчестер Сити": "Manchester City",
-    "Манчестер Юнайтед": "Manchester United",
-    "Тоттенхэм": "Tottenham",
-    "Ньюкасл": "Newcastle",
-    "Астон Вилла": "Aston Villa",
-    "Брайтон": "Brighton",
-    "Вест Хэм": "West Ham",
-    "Эвертон": "Everton",
-    "Кристал Пэлас": "Crystal Palace",
-    "Брентфорд": "Brentford",
-    "Фулхэм": "Fulham",
-    "Вулверхэмптон": "Wolves",
-    "Борнмут": "Bournemouth",
-    "Ноттингем Форест": "Nottingham Forest",
-    "Лестер": "Leicester",
-    "Ипсвич": "Ipswich",
-    "Саутгемптон": "Southampton",
-    # Ла Лига
-    "Реал Мадрид": "Real Madrid",
-    "Барселона": "Barcelona",
-    "Атлетико": "Atletico Madrid",
-    "Севилья": "Sevilla",
-    "Реал Сосьедад": "Real Sociedad",
-    "Атлетик Бильбао": "Athletic Bilbao",
-    "Вильярреал": "Villarreal",
-    "Бетис": "Real Betis",
-    "Валенсия": "Valencia",
-    "Жирона": "Girona",
-    "Осасуна": "Osasuna",
-    "Сельта": "Celta Vigo",
-    "Райо Вальекано": "Rayo Vallecano",
-    "Мальорка": "Mallorca",
-    "Лас-Пальмас": "Las Palmas",
-    "Алавес": "Alaves",
-    "Хетафе": "Getafe",
-    "Эспаньол": "Espanyol",
-    "Леганес": "Leganes",
-    "Вальядолид": "Real Valladolid",
-    # Серия А
-    "Ювентус": "Juventus",
-    "Милан": "AC Milan",
-    "Интер": "Inter",
-    "Наполи": "Napoli",
-    "Рома": "Roma",
-    "Лацио": "Lazio",
-    "Аталанта": "Atalanta",
-    "Фиорентина": "Fiorentina",
-    "Болонья": "Bologna",
-    "Торино": "Torino",
-    "Удинезе": "Udinese",
-    "Дженоа": "Genoa",
-    "Лечче": "Lecce",
-    "Кальяри": "Cagliari",
-    "Верона": "Verona",
-    "Эмполи": "Empoli",
-    "Парма": "Parma",
-    "Комо": "Como",
-    "Венеция": "Venezia",
-    "Монца": "Monza",
-    # Бундеслига
-    "Бавария": "Bayern Munich",
-    "Боруссия Дортмунд": "Borussia Dortmund",
-    "Лейпциг": "RB Leipzig",
-    "Байер": "Bayer Leverkusen",
-    "Айнтрахт Франкфурт": "Eintracht Frankfurt",
-    "Штутгарт": "Stuttgart",
-    "Фрайбург": "Freiburg",
-    "Вольфсбург": "Wolfsburg",
-    "Боруссия Мёнхенгладбах": "Borussia Monchengladbach",
-    "Майнц": "Mainz",
-    "Аугсбург": "Augsburg",
-    "Вердер": "Werder Bremen",
-    "Хоффенхайм": "Hoffenheim",
-    "Унион Берлин": "Union Berlin",
-    "Санкт-Паули": "St. Pauli",
-    "Хайденхайм": "Heidenheim",
-    "Хольштайн Киль": "Holstein Kiel",
-    "Бохум": "Bochum",
-    # Лига 1
-    "ПСЖ": "Paris Saint-Germain",
-    "Марсель": "Marseille",
-    "Монако": "Monaco",
-    "Лион": "Lyon",
-    "Лилль": "Lille",
-    "Ницца": "Nice",
-    "Ренн": "Rennes",
-    "Ланс": "Lens",
-    "Страсбур": "Strasbourg",
-    "Тулуза": "Toulouse",
-    "Монпелье": "Montpellier",
-    "Брест": "Brest",
-    "Нант": "Nantes",
-    "Реймс": "Reims",
-    "Гавр": "Le Havre",
-    "Осер": "Auxerre",
-    "Анже": "Angers",
-    "Сент-Этьен": "Saint-Etienne",
+# ID лиг в API-Football
+API_FOOTBALL_LEAGUES = {
+    "РПЛ": 235,
+    "АПЛ": 39,
+    "Чемпионшип": 40,
+    "Ла Лига": 140,
+    "Ла Лига 2": 141,
+    "Серия А": 135,
+    "Бундеслига": 78,
+    "Лига 1": 61,
+    "Эредивизи": 88,
+    "Примейра": 94,
+    "MLS": 253,
+    "Лига Чемпионов": 2,
+    "Лига Европы": 3,
+    "Лига Конференций": 848,
 }
 
 WHITELIST = [
@@ -204,6 +81,27 @@ def get_fonbet_data_sync(url):
     except Exception: pass
     return None
 
+async def fetch_api_football_teams(client, league_id):
+    """Запрашивает все команды лиги через API-Football и возвращает словарь {название: логотип}."""
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    params = {"league": league_id, "season": 2024}  # 2024 — текущий сезон, можно изменить при необходимости
+    try:
+        resp = await client.get(f"{API_FOOTBALL_BASE}/teams", headers=headers, params=params, timeout=20.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            teams = data.get("response", [])
+            result = {}
+            for t in teams:
+                team_info = t.get("team", {})
+                name = team_info.get("name")
+                logo = team_info.get("logo")
+                if name and logo:
+                    result[name] = logo
+            return result
+    except Exception:
+        pass
+    return {}
+
 async def fetch_odds_and_score(event_id, sem):
     async with sem:
         url = f"{BASE_URL}/events/event?eventId={event_id}&scopeMarket=1600&lang=ru"
@@ -235,6 +133,19 @@ async def fetch_odds_and_score(event_id, sem):
 async def main():
     print("🔄 [Scraper] Запуск...")
     
+    # 1. Загружаем кэш логотипов из Firebase
+    print("📥 Загружаю кэш логотипов из Firebase...")
+    logo_cache = {}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{FIREBASE_DB_URL}/team_logos.json", timeout=15.0)
+            if resp.status_code == 200 and resp.json():
+                logo_cache = resp.json()
+    except Exception:
+        pass
+    print(f"   В кэше: {len(logo_cache)} команд")
+    
+    # 2. Получаем события с Фонбета
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
@@ -275,34 +186,53 @@ async def main():
     print(f"⚽ Матчей: {len(valid_events)}")
     if not valid_events: return
     
+    # 3. Собираем кэфы
     sem = asyncio.Semaphore(20)
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
     results = await asyncio.gather(*tasks)
+    
+    # 4. Загружаем логотипы из API-Football для нужных лиг (если их еще нет в кэше)
+    async with httpx.AsyncClient() as client:
+        for league_name, league_id in API_FOOTBALL_LEAGUES.items():
+            # Проверяем, есть ли уже логотипы для этой лиги в кэше (по названию команды)
+            # Простой признак: если в кэше меньше 10 команд с этой лиги, загружаем
+            # (упрощенно, чтобы не усложнять код)
+            if len([k for k in logo_cache if k]) < 50: # Если кэш почти пуст, грузим все
+                print(f"📥 Загружаю команды для лиги: {league_name} (ID: {league_id})...")
+                teams = await fetch_api_football_teams(client, league_id)
+                if teams:
+                    logo_cache.update(teams)
+                    print(f"   ✅ Получено {len(teams)} команд")
+                await asyncio.sleep(1.0)  # Пауза между запросами
+    
+    # Сохраняем обновленный кэш в Firebase
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.put(f"{FIREBASE_DB_URL}/team_logos.json", json=logo_cache, timeout=30.0)
+        print("💾 Кэш логотипов сохранен в Firebase")
+    except Exception:
+        pass
+    
+    # 5. Формируем матчи
+    # Простая транслитерация для поиска в кэше
+    RU_EN = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
+    def transliterate(text):
+        return ''.join(RU_EN.get(c.lower(), c) for c in text)
     
     matches = {}
     for ev, res in zip(valid_events, results):
         if not res: continue
         odds, score, status = res
-        
         home_name = ev["team1"]
         away_name = ev["team2"]
         league = ev["_league"]
         
-        league_folder = LEAGUE_FOLDERS.get(league, "")
-        if league_folder:
-            # Переводим названия команд на английский
-            home_en = TEAM_TRANSLATIONS.get(home_name, home_name)
-            away_en = TEAM_TRANSLATIONS.get(away_name, away_name)
-            
-            # Кодируем пробелы для URL
-            home_encoded = home_en.replace(" ", "%20")
-            away_encoded = away_en.replace(" ", "%20")
-            
-            home_logo = f"{LOGO_BASE_URL}/{league_folder}/{home_encoded}.png"
-            away_logo = f"{LOGO_BASE_URL}/{league_folder}/{away_encoded}.png"
-        else:
-            home_logo = ""
-            away_logo = ""
+        # Ищем логотипы в кэше по английскому названию
+        home_en = transliterate(home_name)
+        away_en = transliterate(away_name)
+        
+        home_logo = logo_cache.get(home_name) or logo_cache.get(home_en) or ""
+        away_logo = logo_cache.get(away_name) or logo_cache.get(away_en) or ""
         
         matches[f"fon_{ev['id']}"] = {
             "title": f"{home_name} - {away_name}",
