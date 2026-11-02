@@ -1,5 +1,4 @@
 import requests
-import json
 
 def search_fotmob(team_name):
     print(f"\n--- Поиск в FotMob: {team_name} ---")
@@ -11,53 +10,23 @@ def search_fotmob(team_name):
     
     try:
         r = requests.get(url, headers=headers, timeout=10)
-        print(f"  Статус: {r.status_code}")
-        
         if r.status_code == 200:
             data = r.json()
-            print(f"  Тип данных: {type(data)}")
             
-            # Показываем первые 600 символов ответа для отладки
-            print("  Фрагмент ответа (для понимания структуры):")
-            print(json.dumps(data, ensure_ascii=False, indent=2)[:600])
-            
-            # Пытаемся найти команду в зависимости от структуры
-            found = False
-            
-            # Вариант 1: Ответ — это список
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "team":
-                        payload = item.get("payload", {})
-                        team_id = payload.get("id")
-                        name = item.get("title")
-                        if team_id:
-                            logo_url = f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
-                            print(f"  ✅ Найдено: {name} (ID: {team_id})")
-                            print(f"  🔗 Логотип: {logo_url}")
-                            found = True
-                            break
-            
-            # Вариант 2: Ответ — это словарь с ключом suggest
-            elif isinstance(data, dict):
-                suggests = data.get("suggest", [])
-                for item in suggests:
-                    if isinstance(item, dict) and item.get("type") == "team":
-                        payload = item.get("payload", {})
-                        team_id = payload.get("id")
-                        name = item.get("title")
-                        if team_id:
-                            logo_url = f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
-                            print(f"  ✅ Найдено: {name} (ID: {team_id})")
-                            print(f"  🔗 Логотип: {logo_url}")
-                            found = True
-                            break
-            
-            if not found:
-                print("  ⚠️ Команда не найдена в ответе")
+            # Перебираем группы (All, Teams, Matches...)
+            for group in data:
+                suggestions = group.get("suggestions", [])
                 
-        else:
-            print(f"  ❌ Ошибка: {r.text[:100]}")
+                # Ищем внутри группы команду
+                for item in suggestions:
+                    if item.get("type") == "team":
+                        team_id = item.get("id")
+                        name = item.get("name")
+                        if team_id:
+                            logo_url = f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
+                            print(f"  ✅ Найдено: {name} (ID: {team_id})")
+                            print(f"  🔗 Логотип: {logo_url}")
+                            return logo_url # Возвращаем первый найденный логотип
     except Exception as e:
         print(f"  ❌ Исключение: {e}")
     return None
