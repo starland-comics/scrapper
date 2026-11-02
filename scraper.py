@@ -12,28 +12,28 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# Строгий белый список ключевых слов для футбольных лиг
-WHITELIST = [
-    ("англия", "премьер-лига", "апл"),
-    ("россия", "премьер-лига", "рпл"),
-    ("россия", "фнл", "фнл"),
-    ("испания", "ла лига", "ла лига"),
-    ("испания", "сегунда", "ла лига 2"),
-    ("италия", "серия а", "серия а"),
-    ("германия", "бундеслига", "бундеслига"),
-    ("франция", "лига 1", "лига 1"),
-    ("англия", "чемпионшип", "чемпионшип"),
-    ("саудовская", "", "саудовская аравия"),
-    ("нидерланды", "эредивизи", "эредивизи"),
-    ("португалия", "примейра", "примейра"),
-    ("сша", "mls", "mls"),
-    ("лига чемпионов", "", "лига чемпионов"),
-    ("лига европы", "", "лига европы"),
-    ("лига конференций", "", "лига конференций"),
-    ("чемпионат мира", "", "чм"),
-    ("чемпионат европы", "", "че"),
-    ("лига наций", "", "лига наций")
-]
+# ХАРДКОД ID ТОЛЬКО НУЖНЫХ ФУТБОЛЬНЫХ ЛИГ (найдено в базе Фонбета)
+TARGET_LEAGUES = {
+    47: "АПЛ",
+    54: "Серия А",
+    53: "Бундеслига",
+    55: "Лига 1",
+    87: "Ла Лига",
+    11935: "РПЛ",
+    96: "ФНЛ",
+    130: "MLS",
+    11919: "Саудовская Аравия",
+    88: "Чемпионшип",
+    57: "Эредивизи",
+    61: "Примейра",
+    92: "Ла Лига 2",
+    42: "Лига Чемпионов",
+    73: "Лига Европы",
+    1509: "Лига Конференций",
+    110: "ЧМ",
+    111: "ЧЕ",
+    112: "Лига Наций"
+}
 
 def get_fonbet_data_sync(url):
     try:
@@ -73,45 +73,6 @@ async def fetch_odds_and_score(event_id, sem):
         
         return odds, score_str, status_str
 
-def get_football_leagues(data):
-    """Берем лиги СТРОГО из футбольного раздела (kind=1)"""
-    leagues = {}
-    sports = data.get("sports", [])
-    if isinstance(sports, dict): sports = sports.values()
-    
-    for s in sports:
-        if not isinstance(s, dict): continue
-        # Футбол в Фонбете - это kind = 1
-        if s.get("kind") == 1 or s.get("name") == "Футбол":
-            regions = s.get("regions", [])
-            if isinstance(regions, dict): regions = regions.values()
-            for r in regions:
-                if not isinstance(r, dict): continue
-                comps = r.get("competitions", [])
-                if isinstance(comps, dict): comps = comps.values()
-                for c in comps:
-                    if not isinstance(c, dict): continue
-                    cid = c.get("id")
-                    cname = c.get("name") or c.get("rusName")
-                    if cid and cname:
-                        leagues[cid] = cname
-    return leagues
-
-def get_clean_league_name(raw_name):
-    name = raw_name.lower()
-    
-    # Жесткая отсечка мусора внутри лиг
-    if "женщины" in name or "u21" in name or "u19" in name or "юнош" in name or "молодеж" in name:
-        return None
-    if "бундеслига 3" in name or "бундеслига-3" in name or "бундеслига 2" in name or "серия b" in name or "серия c" in name:
-        return None
-
-    for keys, _, clean_name in WHITELIST:
-        if keys in name:
-            return clean_name.upper()
-            
-    return None
-
 async def main():
     print("🔄 [Scraper] Запуск...")
     
@@ -120,25 +81,20 @@ async def main():
     
     if data and "events" in data:
         events = data.get("events", [])
-        leagues_map = get_football_leagues(data)
-        print(f"✅ Загружено футбольных лиг: {len(leagues_map)}")
+        print(f"🔍 Всего событий: {len(events)}")
 
         now = time.time()
         valid_events = []
         
         for ev in events:
+            # Фильтр: футбол (kind=1) и есть команды
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 if ev.get("startTime", 0) > now - 10800:
-                    league_id = ev.get("sportId")
-                    raw_league_name = leagues_map.get(league_id)
+                    sport_id = ev.get("sportId")
                     
-                    if not raw_league_name: continue
-                    
-                    clean_name = get_clean_league_name(raw_league_name)
-                    
-                    # Если лига прошла фильтр, добавляем
-                    if clean_name:
-                        ev['league_name'] = clean_name
+                    # Берем ТОЛЬКО те лиги, которые есть в нашем словаре
+                    if sport_id in TARGET_LEAGUES:
+                        ev['league_name'] = TARGET_LEAGUES[sport_id]
                         valid_events.append(ev)
         
         print(f"⚽ Матчей после фильтрации: {len(valid_events)}")
