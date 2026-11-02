@@ -6,7 +6,6 @@ import urllib.parse
 import os
 import hashlib
 import base64
-import re
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
@@ -15,16 +14,25 @@ OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-comp
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
+
+# ТВОЙ КЛЮЧ API-FOOTBALL ЗАШИТ ПРЯМО ЗДЕСЬ
+APIFOOTBALL_KEY = "48a576d984d21c242b2dbea309b724e5"
+
 FOTMOB_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://www.fotmob.com/"
 }
 
-# Регулярка для жесткого отсева молодежек и женского футбола
-BLACKLIST_REGEX = re.compile(
-    r'\(мол\)|\bмол\b|\bмолод\b|\bюнош\b|\bдубл\b|\bрезерв\b|\bакадем\b|\bu1[789]\b|\bu2[013]\b|\bжен\b|\bлюб\b', 
-    re.IGNORECASE
-)
+# МАКСИМАЛЬНО ЖЁСТКИЙ ФИЛЬТР МУСОРА
+BLACKLIST_WORDS = [
+    # Молодежки и женщины
+    "люб", "жен", "u21", "u19", "u20", "юнош", "молод", "мол", "до 19", "до 21", "до 23", "дубл", "резерв", "академ",
+    # Статистика и рынки
+    "угл", "жк", "кк", "статистика", "победитель группы", "лига a", "лига b", "лига c",
+    "видеопросмотр", "удары от ворот", "удары в створ", "удары по воротам", "штанги", "перекладины", 
+    "ауты", "офсайды", "фолы", "голы", "мед. бригад", "хозяева", "гости", "тотал", "фора", 
+    "обе забьют", "пенальти", "карточк"
+]
 
 INTL_LEAGUE_WORDS = [
     "world cup", "euro ", "european championship", "nations",
@@ -52,16 +60,10 @@ COUNTRY_NAMES = {
     "шотландия", "уэльс",
 }
 
-# ИСПРАВЛЕНО: Порту = 9775 (9772 было Бенфикой)
 FOTMOB_ID_OVERRIDES = {
-    "Порт": 165255,
-    "Порт ФК": 165255,
-    "Порту": 9775,
-    "Тун": 10191,
-    "Акрон": 1068364,
-    "Акрон Тольятти": 1068364,
-    "Родина": 1066681,
-    "Родина Москва": 1066681,
+    "Порт": 165255, "Порт ФК": 165255, "Порту": 9775, 
+    "Тун": 10191, "Акрон": 1068364, "Акрон Тольятти": 1068364,
+    "Родина": 1066681, "Родина Москва": 1066681,
 }
 
 TEAM_OVERRIDES = {
@@ -83,7 +85,8 @@ TEAM_OVERRIDES = {
     "Текстильщик Иваново": "Tekstilshchik", "Памплона": "Osasuna", "Анайтасуна": "Anaitasuna",
     "Саламанка УДС": "Salamanca UDS", "Реус Реддис": "Reus", "Волна Ковернино": "Volna",
     "Конган": "Khon Kaen", "Сабах Баку": "Sabah", "Истанбул Башакшехир": "Istanbul Basaksehir",
-    "Унив. Крайова": "Universitatea Craiova", "Интер Эскальдес": "Inter Club d'Escaldes"
+    "Унив. Крайова": "Universitatea Craiova", "Интер Эскальдес": "Inter Club d'Escaldes",
+    "Эштрела Амора": "Estrela Amadora", "Риу Аве": "Rio Ave"
 }
 
 LEAGUE_COUNTRY_HINTS = {
@@ -111,6 +114,13 @@ def _normalize(s: str) -> str:
     for w in (" fc", " cf", " sc", " ac", " fk", " afc", " club", " фк", " клуб"):
         s = s.replace(w, "").strip()
     return s
+
+def is_valid_match(team1, team2, league):
+    text = f"{team1} {team2} {league}".lower()
+    for word in BLACKLIST_WORDS:
+        if word in text:
+            return False
+    return True
 
 def league_to_country(comp_name: str) -> str | None:
     if not comp_name: return None
@@ -159,28 +169,34 @@ def _cache_from_fb(raw) -> dict:
     if not raw or not isinstance(raw, dict): return {}
     return {_decode_key(k): v for k, v in raw.items()}
 
+# БАТЧ-ПЕРЕВОД С ЧАНКАМИ (по 40 штук)
 def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
     if not texts: return {}
-    SEP = " | "
-    joined = SEP.join(texts)
-    try:
-        params = {"client": "gtx", "sl": "ru", "tl": "en", "dt": "t", "q": joined}
-        r = cffi_requests.get(TRANSLATE_URL, params=params, timeout=20)
-        if r.status_code == 200:
-            data = r.json()
-            segments = data[0] if data and data[0] else []
-            translated_full = "".join(seg[0] for seg in segments if seg and seg[0])
-            parts = [p.strip() for p in translated_full.split("|")]
-            if len(parts) == len(texts):
-                result = {}
-                for orig, trans in zip(texts, parts):
-                    for w in [" FC", "FC ", " FK", "FK ", " CF", "CF "]:
-                        trans = trans.replace(w, "")
-                    result[orig] = trans.strip() or orig
-                return result
-    except Exception:
-        pass
-    return {t: t for t in texts}
+    result = {}
+    for i in range(0, len(texts), 40):
+        chunk = texts[i:i+40]
+        SEP = " | "
+        joined = SEP.join(chunk)
+        try:
+            params = {"client": "gtx", "sl": "ru", "tl": "en", "dt": "t", "q": joined}
+            r = cffi_requests.get(TRANSLATE_URL, params=params, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                segments = data[0] if data and data[0] else []
+                translated_full = "".join(seg[0] for seg in segments if seg and seg[0])
+                parts = [p.strip() for p in translated_full.split("|")]
+                if len(parts) == len(chunk):
+                    for orig, trans in zip(chunk, parts):
+                        for w in [" FC", "FC ", " FK", "FK ", " CF", "CF "]:
+                            trans = trans.replace(w, "")
+                        result[orig] = trans.strip() or orig
+                else:
+                    for t in chunk: result[t] = t
+            else:
+                for t in chunk: result[t] = t
+        except Exception:
+            for t in chunk: result[t] = t
+    return result
 
 def pick_best_candidate(cands, target_name, country_hint):
     if not cands: return None
@@ -248,12 +264,11 @@ async def search_thesportsdb(name_en: str) -> list[dict]:
     return out
 
 async def search_apifootball(name_en: str) -> list[dict]:
-    key = os.getenv("APIFOOTBALL_KEY")
-    if not key: return []
+    if not APIFOOTBALL_KEY: return []
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get("https://v3.football.api-sports.io/teams",
-                                 params={"search": name_en}, headers={"x-apisports-key": key})
+                                 params={"search": name_en}, headers={"x-apisports-key": APIFOOTBALL_KEY})
             if r.status_code != 200: return []
             out = []
             for item in (r.json() or {}).get("response", []):
@@ -282,7 +297,7 @@ async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: d
         cache[key] = logo; LOGO_STATS["fotmob"] += 1
         return logo
 
-    name_en = name_en_map.get(team_ru) or TEAM_OVERRIDES.get(team_ru) or team_ru
+    name_en = TEAM_OVERRIDES.get(team_ru) or name_en_map.get(team_ru) or team_ru
 
     best = pick_best_candidate(search_fotmob_candidates(team_ru, name_en), name_en, country)
     if best and best.get("logo"):
@@ -306,7 +321,7 @@ async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: d
     return fb
 
 async def search_all_logos(teams_with_league: list, cache: dict, name_en_map: dict):
-    sem = asyncio.Semaphore(20)
+    sem = asyncio.Semaphore(10)
     async def one(team, league, force):
         async with sem:
             try:
@@ -385,9 +400,7 @@ async def main():
                     for ev in comp.get("events", []):
                         t1 = ev.get("team1Name", "")
                         t2 = ev.get("team2Name", "")
-                        text_to_check = f"{t1} {t2} {comp_name}"
-                        # ЖЕСТКИЙ ОТСЕВ МОЛОДЕЖЕК И ЖЕНЩИН
-                        if t1 and t2 and not BLACKLIST_REGEX.search(text_to_check):
+                        if t1 and t2 and is_valid_match(t1, t2, comp_name):
                             all_matches.append((ev, status_type, comp_name))
                             count += 1
         return count
@@ -414,7 +427,6 @@ async def main():
         print(f"🔎 Поиск логотипов для {len(missing)} пар (team, league)...")
         all_teams = list({t for t, _, _ in missing})
         name_en_map = batch_translate_ru_to_en(all_teams)
-        for team, en in TEAM_OVERRIDES.items(): name_en_map[team] = en
 
         t0 = time.time()
         await search_all_logos(list(missing), logo_cache, name_en_map)
@@ -425,9 +437,8 @@ async def main():
     ok = await firebase_put("team_logos", payload)
     print(f"💾 Кэш логотипов: {len(logo_cache)} записей, ok={ok}")
 
-    # ВЫВОД КЛУБОВ, У КОТОРЫХ НЕТ ЛОГО (ДЛЯ РУЧНОГО ДОБАВЛЕНИЯ ID)
     if FALLBACK_TEAMS:
-        print(f"🚨 БЕЗ ЛОГОТИПОВ (FALLBACK): {list(set(FALLBACK_TEAMS))}")
+        print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
