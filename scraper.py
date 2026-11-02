@@ -12,12 +12,7 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# Черный список слов, которые выкидывают лигу в мусор
-BLACKLIST = [
-    "женщины", "u21", "u19", "u20", "молодеж", "юнош", "резерв", "любител", 
-    "истмиан", "северная", "южная", "восточная", "западная", "регион", 
-    "баскетбол", "волейбол", "теннис", "кибер"
-]
+BLACKLIST = ["женщины", "u21", "u19", "u20", "молодеж", "юнош", "резерв", "любител", "истмиан", "северная", "южная", "восточная", "западная", "регион"]
 
 def get_fonbet_data_sync(url):
     try:
@@ -57,24 +52,46 @@ async def fetch_odds_and_score(event_id, sem):
         
         return odds, score_str, status_str
 
+def get_football_leagues(data):
+    leagues = {}
+    # Ищем только в разделе sports, где kind == 1 (футбол)
+    sports = data.get("sports", [])
+    if isinstance(sports, dict): sports = sports.values()
+    
+    for s in sports:
+        if not isinstance(s, dict): continue
+        if s.get("kind") == 1 or s.get("name") == "Футбол":
+            regions = s.get("regions", [])
+            if isinstance(regions, dict): regions = regions.values()
+            for r in regions:
+                if not isinstance(r, dict): continue
+                comps = r.get("competitions", [])
+                if isinstance(comps, dict): comps = comps.values()
+                for c in comps:
+                    if not isinstance(c, dict): continue
+                    cid = c.get("id")
+                    cname = c.get("name") or c.get("rusName")
+                    if cid and cname:
+                        leagues[cid] = cname
+    return leagues
+
 def normalize_league_name(raw_name):
     name = raw_name.lower()
     
-    # ТОЧНЫЕ СОВПАДЕНИЯ (отсекаем "Англия. Премьер-лига. Северная" и т.д.)
-    if name == "англия. премьер-лига" or "премьер-лига. сезон" in name: return "АПЛ"
-    if name == "испания. ла лига" or "ла лига. сезон" in name: return "Ла Лига"
-    if name == "италия. серия а" or "серия а. сезон" in name: return "Серия А"
-    if name == "германия. бундеслига" or "бундеслига. сезон" in name: return "Бундеслига"
-    if name == "франция. лига 1" or "лига 1. сезон" in name: return "Лига 1"
-    if name == "россия. премьер-лига" or "премьер-лига. сезон" in name and "россия" in name: return "РПЛ"
-    
-    if "испания. сегунда" in name: return "Ла Лига 2"
-    if "россия. фнл" in name: return "ФНЛ"
+    # СТРОГАЯ ПРОВЕРКА
+    if "россия" in name and "премьер-лига" in name: return "РПЛ"
+    if "россия" in name and "фнл" in name: return "ФНЛ"
+    if "англия" in name and "премьер-лига" in name and "северная" not in name: return "АПЛ"
+    if "испания" in name and "ла лига" in name and "сегунда" not in name: return "Ла Лига"
+    if "испания" in name and "сегунда" in name: return "Ла Лига 2"
+    if "италия" in name and "серия а" in name: return "Серия А"
+    if "германия" in name and "бундеслига" in name and "2" not in name: return "Бундеслига"
+    if "франция" in name and "лига 1" in name: return "Лига 1"
+    if "англия" in name and "чемпионшип" in name: return "Чемпионшип"
     if "саудовская" in name: return "Саудовская Аравия"
-    if "нидерланды. эредивизи" in name: return "Эредивизи"
-    if "португалия. примейра" in name: return "Примейра"
-    if "сша. mls" in name or "сша. млс" in name: return "MLS"
-    if "англия. чемпионшип" in name: return "Чемпионшип"
+    if "нидерланды" in name and "эредивизи" in name: return "Эредивизи"
+    if "португалия" in name and "примейра" in name: return "Примейра"
+    if "сша" in name and ("mls" in name or "млс" in name): return "MLS"
     
     if "лига чемпионов" in name: return "Лига Чемпионов"
     if "лига европы" in name: return "Лига Европы"
@@ -86,25 +103,6 @@ def normalize_league_name(raw_name):
     
     return raw_name
 
-def extract_leagues(data):
-    leagues = {}
-    for key, val in data.items():
-        if isinstance(val, list):
-            for item in val:
-                if isinstance(item, dict):
-                    cid = item.get("id") or item.get("sportId")
-                    cname = item.get("name") or item.get("rusName")
-                    if cid and cname and isinstance(cname, str):
-                        leagues[cid] = cname
-        elif isinstance(val, dict):
-            for item in val.values():
-                if isinstance(item, dict):
-                    cid = item.get("id") or item.get("sportId")
-                    cname = item.get("name") or item.get("rusName")
-                    if cid and cname and isinstance(cname, str):
-                        leagues[cid] = cname
-    return leagues
-
 async def main():
     print("🔄 [Scraper] Запуск...")
     
@@ -113,8 +111,8 @@ async def main():
     
     if data and "events" in data:
         events = data.get("events", [])
-        leagues_map = extract_leagues(data)
-        print(f"✅ Загружено названий лиг: {len(leagues_map)}")
+        leagues_map = get_football_leagues(data)
+        print(f"✅ Загружено футбольных лиг: {len(leagues_map)}")
 
         now = time.time()
         valid_events = []
@@ -123,18 +121,15 @@ async def main():
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 if ev.get("startTime", 0) > now - 10800:
                     league_id = ev.get("sportId")
-                    raw_league_name = leagues_map.get(league_id, "")
+                    raw_league_name = leagues_map.get(league_id)
                     
                     if not raw_league_name: continue
                     
                     l_name = raw_league_name.lower()
-                    # Если есть запрещенные слова — пропускаем
-                    if any(bad_word in l_name for bad_word in BLACKLIST):
-                        continue
+                    if any(bad_word in l_name for bad_word in BLACKLIST): continue
 
                     clean_name = normalize_league_name(raw_league_name)
                     
-                    # Оставляем только те, что мы нормализовали (то есть целевые)
                     if clean_name != raw_league_name:
                         ev['league_name'] = clean_name
                         valid_events.append(ev)
