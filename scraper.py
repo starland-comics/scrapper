@@ -6,33 +6,63 @@ from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
+
 FONBET_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json",
     "Referer": "https://www.fon.bet/",
 }
 
+# Каждая запись: (список обязательных ключевых слов, итоговое название)
 WHITELIST = [
-    ("англия", "премьер-лига", "АПЛ"),
-    ("россия", "премьер-лига", "РПЛ"),
-    ("россия", "фнл", "ФНЛ"),
-    ("испания", "ла лига", "Ла Лига"),
-    ("испания", "сегунда", "Ла Лига 2"),
-    ("италия", "серия а", "Серия А"),
-    ("германия", "бундеслига", "Бундеслига"),
-    ("франция", "лига 1", "Лига 1"),
-    ("англия", "чемпионшип", "Чемпионшип"),
-    ("саудовская", "", "Саудовская Аравия"),
-    ("нидерланды", "эредивизи", "Эредивизи"),
-    ("португалия", "примейра", "Примейра"),
-    ("сша", "mls", "MLS"),
-    ("лига чемпионов", "", "Лига Чемпионов"),
-    ("лига европы", "", "Лига Европы"),
-    ("лига конференций", "", "Лига Конференций"),
-    ("чемпионат мира", "", "ЧМ"),
-    ("чемпионат европы", "", "ЧЕ"),
-    ("лига наций", "", "Лига Наций")
+    (["испания", "сегунда"], "Ла Лига 2"),
+    (["англия", "чемпионшип"], "Чемпионшип"),
+    (["россия", "премьер-лига"], "РПЛ"),
+    (["россия", "фнл"], "ФНЛ"),
+    (["англия", "премьер-лига"], "АПЛ"),
+    (["испания", "ла лига"], "Ла Лига"),
+    (["италия", "серия а"], "Серия А"),
+    (["германия", "бундеслига"], "Бундеслига"),
+    (["франция", "лига 1"], "Лига 1"),
+    (["саудовская"], "Саудовская Аравия"),
+    (["нидерланды", "эредивизи"], "Эредивизи"),
+    (["португалия", "примейра"], "Примейра"),
+    (["сша", "mls"], "MLS"),
+    (["лига чемпионов"], "Лига Чемпионов"),
+    (["лига европы"], "Лига Европы"),
+    (["лига конференций"], "Лига Конференций"),
+    (["чемпионат мира"], "ЧМ"),
+    (["чемпионат европы"], "ЧЕ"),
+    (["лига наций"], "Лига Наций"),
 ]
+
+BLACKLIST = [
+    "женщины", "жен.", "u21", "u19", "u20", "u23", 
+    "юнош", "молодеж", "резерв", "молодёж",
+    "бундеслига 3", "бундеслига-3", "бундеслига 2",
+    "серия b", "серия c", "серия d",
+    "истмиан", "северная", "южная", "восточная", "западная",
+    "регион", "любител", "товарищеск",
+    "баскетбол", "волейбол", "хоккей", "теннис", "кибер",
+    "борьб", "бокс", "мма", "ufc",
+]
+
+def get_clean_league(raw_name):
+    if not raw_name or not isinstance(raw_name, str):
+        return None
+    name = raw_name.lower().strip()
+    
+    # Проверка blacklist
+    for bad in BLACKLIST:
+        if bad in name:
+            return None
+    
+    # Проверка whitelist — ВСЕ ключевые слова должны быть
+    for keywords, clean in WHITELIST:
+        if all(kw in name for kw in keywords):
+            return clean
+    
+    return None
 
 def get_fonbet_data_sync(url):
     try:
@@ -43,43 +73,61 @@ def get_fonbet_data_sync(url):
         pass
     return None
 
-def get_clean_league_name(raw_name):
-    if not raw_name: return None
-    name = raw_name.lower()
-    if any(x in name for x in ["женщины", "u21", "u19", "юнош", "молодеж", "бундеслига 3", "бундеслига-3", "серия b", "серия c", "баскетбол"]):
-        return None
-    for keys, _, clean_name in WHITELIST:
-        if keys in name:
-            return clean_name
-    return None
-
-def extract_leagues_recursive(data, leagues=None):
-    """Рекурсивно ищет все пары ID-Название в любом месте JSON."""
-    if leagues is None: leagues = {}
+def extract_league_map(data):
+    """Собирает ID->Название ТОЛЬКО из справочников (без рекурсии)."""
+    result = {}
     
-    if isinstance(data, dict):
-        cid = data.get("id") or data.get("sportId") or data.get("competitionId")
-        cname = data.get("name") or data.get("rusName") or data.get("competition")
-        
-        if cid and isinstance(cname, str) and len(cname) > 2:
-            # Игнорируем названия видов спорта
-            if cname.lower() not in ["футбол", "баскетбол", "волейбол", "теннис", "хоккей", "киберспорт"]:
-                leagues[int(cid)] = cname
-                
-        for v in data.values():
-            extract_leagues_recursive(v, leagues)
-            
-    elif isinstance(data, list):
-        for item in data:
-            extract_leagues_recursive(item, leagues)
-            
-    return leagues
+    def add(cid, cname):
+        if cid is None or cname is None or not isinstance(cname, str):
+            return
+        try:
+            result[int(cid)] = cname
+        except (ValueError, TypeError):
+            pass
+    
+    # 1. tournamentInfos
+    tis = data.get("tournamentInfos")
+    if tis:
+        if isinstance(tis, dict):
+            tis = list(tis.values())
+        if isinstance(tis, list):
+            for t in tis:
+                if isinstance(t, dict):
+                    add(t.get("id") or t.get("tournamentId"),
+                        t.get("name") or t.get("rusName"))
+    
+    # 2. sports
+    sports = data.get("sports")
+    if sports:
+        if isinstance(sports, dict):
+            sports = list(sports.values())
+        if isinstance(sports, list):
+            for s in sports:
+                if not isinstance(s, dict):
+                    continue
+                regions = s.get("regions") or []
+                if isinstance(regions, dict):
+                    regions = list(regions.values())
+                for r in regions:
+                    if not isinstance(r, dict):
+                        continue
+                    comps = r.get("competitions") or []
+                    if isinstance(comps, dict):
+                        comps = list(comps.values())
+                    for c in comps:
+                        if not isinstance(c, dict):
+                            continue
+                        add(c.get("id") or c.get("competitionId"),
+                            c.get("name") or c.get("rusName"))
+    
+    return result
 
 async def fetch_odds_and_score(event_id, sem):
     async with sem:
         url = f"{BASE_URL}/events/event?eventId={event_id}&scopeMarket=1600&lang=ru"
         data = await asyncio.to_thread(get_fonbet_data_sync, url)
-        if not data: return None
+        if not data:
+            return None
         
         odds = {"1": None, "X": None, "2": None}
         for cf in data.get("customFactors", []):
@@ -91,7 +139,8 @@ async def fetch_odds_and_score(event_id, sem):
             if odds["1"] and odds["X"] and odds["2"]:
                 break
         
-        if not odds["1"]: return None
+        if not odds["1"]:
+            return None
         
         event_info = data.get("event", {})
         score1 = event_info.get("score1")
@@ -109,68 +158,88 @@ async def main():
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
-    if data and "events" in data:
-        events = data.get("events", [])
-        print(f"🔍 Всего событий: {len(events)}")
-
-        # Рекурсивный поиск всех возможных лиг
-        all_leagues = extract_leagues_recursive(data)
-        print(f"🔎 Всего сущностей с ID и названием: {len(all_leagues)}")
-        
-        valid_leagues = {}
-        for lid, lname in all_leagues.items():
-            clean = get_clean_league_name(lname)
-            if clean:
-                valid_leagues[lid] = clean
-                
-        print(f"✅ Целевых лиг найдено: {len(valid_leagues)}")
-        if valid_leagues:
-            print(f"Примеры: {list(valid_leagues.values())[:5]}")
-        else:
-            print("Примеры всех найденных названий (для отладки):")
-            for lid, lname in list(all_leagues.items())[:10]:
-                print(f"   ID {lid}: {lname}")
-
-        now = time.time()
-        valid_events = []
-        
-        for ev in events:
-            if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
-                start = ev.get("startTime", 0)
-                if start > now - 10800 and start < now + 172800: 
-                    sport_id = ev.get("sportId")
-                    if sport_id in valid_leagues:
-                        ev['league_name'] = valid_leagues[sport_id]
-                        valid_events.append(ev)
-        
-        print(f"⚽ Матчей из целевых лиг: {len(valid_events)}")
-        
-        sem = asyncio.Semaphore(20)
-        tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
-        results = await asyncio.gather(*tasks)
-        
-        matches = {}
-        for ev, res in zip(valid_events, results):
-            if res:
-                odds, score, status = res
-                matches[f"fon_{ev['id']}"] = {
-                    "title": f"{ev['team1']} - {ev['team2']}",
-                    "home": ev['team1'], "away": ev['team2'],
-                    "homeLogo": f"https://static.fon.bet/team_logos/{ev.get('team1Id')}.png",
-                    "awayLogo": f"https://static.fon.bet/team_logos/{ev.get('team2Id')}.png",
-                    "league": ev['league_name'], 
-                    "status": status, "score": score,
-                    "start_time": ev.get("startTime"), "odds": odds
-                }
-        
-        if matches:
-            async with httpx.AsyncClient() as client:
-                await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches)
-            print(f"🔥 Успешно сохранено {len(matches)} матчей в Firebase!")
-        else:
-            print("⚠️ Кэфов не найдено.")
-    else:
+    if not data or "events" not in data:
         print("⚠️ Не удалось получить список событий.")
+        return
+    
+    events = data.get("events", [])
+    print(f"🔍 Всего событий: {len(events)}")
+    
+    # 1. Загружаем карту лиг
+    league_map = extract_league_map(data)
+    print(f"📋 Лиг в справочнике: {len(league_map)}")
+    
+    # 2. Фильтруем карту по whitelist
+    valid_leagues = {}
+    for lid, raw_name in league_map.items():
+        clean = get_clean_league(raw_name)
+        if clean:
+            valid_leagues[lid] = clean
+    
+    print(f"✅ Целевых лиг: {len(valid_leagues)}")
+    if valid_leagues:
+        print("   Найдено:", ", ".join(valid_leagues.values()))
+    else:
+        print("⚠️ Справочник лиг не подошёл. Отладка:")
+        print(f"   tournamentInfos: {type(data.get('tournamentInfos'))}")
+        print(f"   sports: {type(data.get('sports'))}")
+        for lid, lname in list(league_map.items())[:15]:
+            print(f"   ID {lid}: {lname}")
+        return
+    
+    # 3. Фильтруем матчи
+    now = time.time()
+    valid_events = []
+    for ev in events:
+        if ev.get("kind") != 1:
+            continue
+        if not ev.get("team1") or not ev.get("team2"):
+            continue
+        start = ev.get("startTime", 0)
+        if not (now - 10800 < start < now + 172800):
+            continue
+        sport_id = ev.get("sportId")
+        if sport_id not in valid_leagues:
+            continue
+        ev["_league"] = valid_leagues[sport_id]
+        valid_events.append(ev)
+    
+    print(f"⚽ Матчей из целевых лиг: {len(valid_events)}")
+    
+    if not valid_events:
+        return
+    
+    # 4. Собираем кэфы
+    sem = asyncio.Semaphore(20)
+    tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
+    results = await asyncio.gather(*tasks)
+    
+    matches = {}
+    for ev, res in zip(valid_events, results):
+        if not res:
+            continue
+        odds, score, status = res
+        matches[f"fon_{ev['id']}"] = {
+            "title": f"{ev['team1']} - {ev['team2']}",
+            "home": ev["team1"],
+            "away": ev["team2"],
+            "homeLogo": f"https://static.fon.bet/team_logos/{ev.get('team1Id')}.png",
+            "awayLogo": f"https://static.fon.bet/team_logos/{ev.get('team2Id')}.png",
+            "league": ev["_league"],
+            "status": status,
+            "score": score,
+            "start_time": ev.get("startTime"),
+            "odds": odds,
+        }
+    
+    print(f"✅ Готово к отправке: {len(matches)} матчей")
+    
+    if matches:
+        async with httpx.AsyncClient() as client:
+            await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches)
+        print(f"🔥 Успешно сохранено {len(matches)} матчей в Firebase!")
+    else:
+        print("⚠️ Кэфов не найдено.")
 
 if __name__ == "__main__":
     asyncio.run(main())
