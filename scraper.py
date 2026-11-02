@@ -3,14 +3,11 @@ import time
 import httpx
 import json
 import urllib.parse
-import difflib
 from curl_cffi import requests as cffi_requests
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 
-# ФУТБОЛ = vids[]=1. Для лайва работает, для линии - нет (выдает 400)
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events?vids%5B%5D=1"
-# ДЛЯ ЛИНИИ УБИРАЕМ vids, чтобы не было 400
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
 
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
@@ -21,7 +18,77 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-BLACKLIST_WORDS = ["люб", "жен", "u21", "u19", "u20", "юнош", "молод", "угл", "жк", "кк", "статистика"]
+BLACKLIST_WORDS = [
+    "люб", "жен", "u21", "u19", "u20", "юнош", "молод", "угл", "жк", "кк",
+    "статистика", "победитель группы", "лига a", "лига b", "лига c"
+]
+
+# Исключаем сборные (чтобы Комо не находил Коморы)
+INTL_LEAGUE_WORDS = [
+    "world cup", "euro ", "european championship", "nations",
+    "copa america", "africa cup", "asian cup", "gold cup",
+    "olympic", "friendly international", "confederations"
+]
+
+# ТОЛЬКО критичные команды (остальные найдет умный поиск)
+TEAM_OVERRIDES = {
+    "Байер 04": "Bayer Leverkusen",
+    "Майнц 05": "Mainz",
+    "Интер Милан": "Inter",
+    "Комо": "Como",
+    "Атлетик Бильбао": "Athletic Bilbao",
+    "Спортинг Лиссабон": "Sporting CP",
+    "Крылья Советов": "Krylia Sovetov",
+    "Брюгге": "Club Brugge",
+    "Кёльн": "Koln",
+    "Факел": "Fakel Voronezh",
+    "Рубин": "Rubin Kazan",
+    "Енисей": "Yenisey",
+    "Акрон": "Akron Tolyatti",
+    "Родина": "Rodina Moscow",
+    "Алавес": "Alaves",
+    "Венеция": "Venezia",
+    "Витория Гимарайнш": "Vitoria Guimaraes",
+    "Витория БА": "Vitoria Setubal",
+    "Виктория Пльзень": "Viktoria Plzen",
+    "Юнион Сен-Жиллуаз": "Union St. Gilloise",
+    "Дармштадт 98": "Darmstadt",
+    "Торренсе": "Torrent",
+    "Синт-Трёйден": "Sint-Truiden",
+    "Аль-Кадисия Хубар": "Al-Qadsiah",
+    "Аль-Шабаб Рияд": "Al-Shabab",
+    "Аль-Наср Рияд": "Al-Nassr",
+    "Аль-Хиляль Рияд": "Al-Hilal",
+    "Аль-Ахли Джидда": "Al-Ahli",
+    "Аль-Иттихад Джидда": "Al-Ittihad",
+    "Аль-Иттифак": "Al-Ettifaq",
+    "Аль-Таавун": "Al-Taawoun",
+    "Аль-Фатех": "Al-Fateh",
+    "Аль-Фейха": "Al-Fayha",
+    "Аль-Фейсали Харма": "Al-Faisaly",
+    "Аль-Хазм": "Al-Hazem",
+    "Эстеглаль Тегеран": "Esteghlal",
+    "Тэджон Ситизен": "Daejeon Citizen",
+    "Чонбук": "Jeonbuk",
+    "Штурм": "Sturm Graz",
+    "Камбур": "Cambuur",
+    "ВПР Астана": "Astana",
+    "Хромтау": "Khromtau",
+    "Кайсар": "Kaisar",
+    "Нью-Йорк Ред Буллс": "New York Red Bulls",
+    "Лос-Анджелес Гэлакси": "LA Galaxy",
+    "Текстильщик Иваново": "Tekstilshchik",
+    "Памплона": "Osasuna",
+    "Анайтасуна": "Anaitasuna",
+    "Саламанка УДС": "Salamanca UDS",
+    "Реус Реддис": "Reus",
+    "Волна Ковернино": "Volna",
+    "Конган": "Khon Kaen",
+    "Сабах Баку": "Sabah",
+    "Истанбул Башакшехир": "Istanbul Basaksehir",
+    "Унив. Крайова": "Universitatea Craiova",
+    "Интер Эскальдес": "Inter Club d'Escaldes"
+}
 
 def is_valid_match(team1, team2, league):
     text = f"{team1} {team2} {league}".lower()
@@ -35,67 +102,53 @@ def translate_ru_to_en(text):
         params = {"client": "gtx", "sl": "ru", "tl": "en", "dt": "t", "q": text}
         r = cffi_requests.get(TRANSLATE_URL, params=params, timeout=5)
         if r.status_code == 200:
-            data = r.json()
-            translated = data[0][0][0]
-            # Очищаем от лишних приставок
-            translated = translated.replace(" FC", "").replace("FC ", "").replace(" FK", "").replace("FK ", "").strip()
-            return translated
+            translated = r.json()[0][0][0]
+            for w in [" FC", "FC ", " FK", "FK ", " CF", "CF "]:
+                translated = translated.replace(w, "")
+            return translated.strip()
     except Exception:
         pass
     return text
 
-def clean_team_name(name):
-    """Убирает лишние приставки для лучшего поиска"""
-    bad_words = ["ФК", "ФК ", " 04", " 05", " Москва", " Санкт-Петербург", " (люб)", " (жен)"]
-    for w in bad_words:
-        name = name.replace(w, "")
-    return name.strip()
-
 def search_fotmob_logo(team_name):
-    # Варианты запросов для поиска
-    queries = []
+    # Если есть в override — используем его
+    if team_name in TEAM_OVERRIDES:
+        queries = [TEAM_OVERRIDES[team_name]]
+    else:
+        queries = [team_name, translate_ru_to_en(team_name)]
     
-    # 1. Оригинальное название (русское)
-    queries.append(team_name)
-    
-    # 2. Очищенное русское название
-    cleaned = clean_team_name(team_name)
-    if cleaned != team_name: queries.append(cleaned)
-    
-    # 3. Перевод на английский
-    trans = translate_ru_to_en(team_name)
-    if trans != team_name: queries.append(trans)
-    
-    # 4. Очищенный перевод
-    trans_clean = clean_team_name(trans)
-    if trans_clean not in queries: queries.append(trans_clean)
-
+    seen = set()
     for q in queries:
+        if q in seen: continue
+        seen.add(q)
         try:
             url = f"{FOTMOB_SEARCH_URL}?term={urllib.parse.quote(q)}&lang=ru"
             r = cffi_requests.get(url, headers=FOTMOB_HEADERS, impersonate="chrome120", timeout=10)
             if r.status_code == 200:
                 data = r.json()
-                # Ищем среди всех групп и предложений
+                candidates = []
                 for group in data:
                     for item in group.get("suggestions", []):
-                        if item.get("type") == "team":
-                            found_name = item.get("name", "")
-                            team_id = item.get("id")
-                            
-                            # Проверка на нечеткое совпадение (если в запросе > 4 символов)
-                            if team_id and len(q) > 4:
-                                ratio = difflib.SequenceMatcher(None, q.lower(), found_name.lower()).ratio()
-                                if ratio > 0.5: # Если похоже хотя бы на 50%
-                                    return f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
-                            
-                            # Для коротких запросов (например, "Порт") берем первый результат
-                            elif team_id and len(q) <= 4:
-                                return f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
-                                
+                        if item.get("type") != "team":
+                            continue
+                        league = (item.get("leagueName") or "").lower()
+                        # Отсекаем сборные
+                        if any(w in league for w in INTL_LEAGUE_WORDS):
+                            continue
+                        if not item.get("id"):
+                            continue
+                        candidates.append({
+                            "id": item.get("id"),
+                            "score": item.get("score", 0)
+                        })
+                
+                if candidates:
+                    # Берем клуб с самым высоким рейтингом FotMob
+                    candidates.sort(key=lambda x: x["score"], reverse=True)
+                    return f"https://images.fotmob.com/image_resources/logo/teamlogo/{candidates[0]['id']}.png"
         except Exception:
             pass
-            
+    
     return ""
 
 def fetch_olimp_matches(url):
@@ -104,18 +157,14 @@ def fetch_olimp_matches(url):
         "Accept": "application/json",
         "Accept-Encoding": "gzip, deflate"
     }
-    
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            print(f"   Попытка {attempt + 1}/3...")
             r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=120)
             if r.status_code == 200:
                 return r.json()
-            else:
-                print(f"   ⚠️ Статус {r.status_code}")
         except Exception as e:
-            print(f"   ⚠️ Ошибка попытки {attempt + 1}: {str(e)[:150]}")
-            time.sleep(3)
+            print(f"   ⚠️ Попытка {attempt + 1}: {str(e)[:100]}")
+            time.sleep(1)
     return []
 
 async def firebase_get(path):
@@ -133,23 +182,34 @@ async def firebase_put(path, data):
     except Exception:
         pass
 
+async def search_all_logos(teams, cache):
+    """Параллельный поиск логотипов (10 одновременно)"""
+    sem = asyncio.Semaphore(10)
+    
+    async def search_one(team):
+        async with sem:
+            logo = await asyncio.to_thread(search_fotmob_logo, team)
+            cache[team] = logo or ""
+    
+    tasks = [search_one(team) for team in teams]
+    await asyncio.gather(*tasks)
+
 async def main():
     print("🔄 [Scraper] Запуск...")
     
     logo_cache = await firebase_get("team_logos") or {}
     print(f"📥 В кэше логотипов: {len(logo_cache)}")
 
-    print("📥 Загружаю LIVE с Olimpbet...")
+    print("📥 Загружаю LIVE...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
-    print(f"   Получено групп: {len(live_data) if live_data else 0}")
     
-    print("📥 Загружаю ЛИНИЮ с Olimpbet...")
+    print("📥 Загружаю ЛИНИЮ...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
-    print(f"   Получено групп: {len(line_data) if line_data else 0}")
     
     all_matches = []
     
     def parse_olimp_data(data, status_type):
+        count = 0
         for sport_group in data:
             sport = sport_group.get("payload", {}).get("sport", {})
             if str(sport.get("id")) == "1":
@@ -161,13 +221,23 @@ async def main():
                         t2 = ev.get("team2Name", "")
                         if is_valid_match(t1, t2, comp_name):
                             all_matches.append((ev, status_type, comp_name))
+                            count += 1
+        return count
 
-    parse_olimp_data(live_data, "LIVE")
-    parse_olimp_data(line_data, "Скоро")
+    live_count = parse_olimp_data(live_data, "LIVE")
+    line_count = parse_olimp_data(line_data, "Скоро")
 
-    print(f"⚽ Найдено валидных матчей: {len(all_matches)}")
+    print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
+    
+    # Debug: показываем структуру первого LIVE-матча
+    if live_count > 0:
+        sample = next((m for m in all_matches if m[1] == "LIVE"), None)
+        if sample:
+            ev = sample[0]
+            print(f"   DEBUG LIVE keys: {list(ev.keys())[:15]}")
+            print(f"   DEBUG score1={ev.get('score1')}, score2={ev.get('score2')}, time={ev.get('time')}")
 
-    # Умный поиск логотипов
+    # Параллельный поиск логотипов
     missing_teams = set()
     for ev, _, _ in all_matches:
         t1 = ev.get("team1Name")
@@ -176,19 +246,11 @@ async def main():
         if t2 and t2 not in logo_cache: missing_teams.add(t2)
 
     if missing_teams:
-        print(f"🔎 Умный поиск логотипов для {len(missing_teams)} команд...")
-        for team in missing_teams:
-            # Если уже пытались и не нашли (""), не тратим время
-            if logo_cache.get(team) == "": continue
-            
-            logo = await asyncio.to_thread(search_fotmob_logo, team)
-            if logo:
-                logo_cache[team] = logo
-                print(f"   ✅ {team}")
-            else:
-                logo_cache[team] = ""
-                print(f"   ❌ {team} (не найдено)")
-            await asyncio.sleep(0.1)
+        print(f"🔎 Параллельный поиск логотипов для {len(missing_teams)} команд...")
+        t0 = time.time()
+        await search_all_logos(missing_teams, logo_cache)
+        found = sum(1 for t in missing_teams if logo_cache.get(t))
+        print(f"✅ Найдено {found} / {len(missing_teams)} за {time.time()-t0:.1f}s")
 
     await firebase_put("team_logos", logo_cache)
 
@@ -210,15 +272,14 @@ async def main():
         score = "VS"
         status_str = status_type
         if status_type == "LIVE":
-            score1 = ev.get("score1", ev.get("liveScore1", 0))
-            score2 = ev.get("score2", ev.get("liveScore2", 0))
+            # Перебираем все возможные ключи для счета и минуты
+            score1 = ev.get("score1") or ev.get("liveScore1") or ev.get("result1") or ev.get("homeScore") or 0
+            score2 = ev.get("score2") or ev.get("liveScore2") or ev.get("result2") or ev.get("awayScore") or 0
             score = f"{score1} : {score2}"
             
-            minute = ev.get("time", ev.get("liveTime", ""))
+            minute = ev.get("time") or ev.get("liveTime") or ev.get("minute") or ev.get("currentMinute") or ""
             if minute:
                 status_str = f"LIVE {minute}'"
-            else:
-                status_str = "LIVE"
 
         time_display = status_str
         if status_type == "Скоро":
@@ -241,9 +302,7 @@ async def main():
 
     if matches_dict:
         await firebase_put("matches", matches_dict)
-        print(f"🔥 Успешно сохранено {len(matches_dict)} матчей в Firebase!")
-    else:
-        print("⚠️ Матчей не найдено.")
+        print(f"🔥 Сохранено {len(matches_dict)} матчей")
 
 if __name__ == "__main__":
     asyncio.run(main())
