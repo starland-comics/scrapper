@@ -2,7 +2,7 @@ import asyncio
 import time
 import httpx
 import json
-import difflib
+import urllib.parse
 from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
@@ -16,96 +16,25 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# Добавлены все нужные лиги
 API_FOOTBALL_LEAGUES = {
-    "РПЛ": 235,
-    "ФНЛ": 236,             # Russian First League
-    "АПЛ": 39,
-    "Чемпионшип": 40,
-    "Ла Лига": 140,
-    "Ла Лига 2": 141,
-    "Серия А": 135,
-    "Бундеслига": 78,
-    "Лига 1": 61,
-    "Эредивизи": 88,
-    "Примейра": 94,
-    "MLS": 253,
-    "Саудовская Аравия": 307,   # Saudi Pro League
-    "Лига Чемпионов": 2,
-    "Лига Европы": 3,
-    "Лига Конференций": 848,
-    "ЧМ": 1,
-    "ЧЕ": 4,
-    "Лига Наций": 5,
-}
-
-# Точные переводы для сложных случаев (К→C, Ч→Ch и т.д.)
-TEAM_OVERRIDES = {
-    "Комо": "Como",
-    "Челси": "Chelsea",
-    "Чезена": "Cesena",
-    "Читтаделла": "Cittadella",
-    "Дженоа": "Genoa",
-    "Ювентус": "Juventus",
-    "Интер": "Inter",
-    "Милан": "AC Milan",
-    "Наполи": "Napoli",
-    "Лацио": "Lazio",
-    "Рома": "Roma",
-    "Аталанта": "Atalanta",
-    "Болонья": "Bologna",
-    "Фиорентина": "Fiorentina",
-    "Торино": "Torino",
-    "Удинезе": "Udinese",
-    "Верона": "Verona",
-    "Монца": "Monza",
-    "Лечче": "Lecce",
-    "Кальяри": "Cagliari",
-    "Эмполи": "Empoli",
-    "Парма": "Parma",
-    "Венеция": "Venezia",
-    "Зенит": "Zenit",
-    "Спартак": "Spartak Moscow",
-    "Краснодар": "Krasnodar",
-    "Динамо Москва": "Dinamo Moscow",
-    "Локомотив Москва": "Lokomotiv Moscow",
-    "ЦСКА": "CSKA Moscow",
-    "Ростов": "Rostov",
-    "Рубин": "Rubin Kazan",
-    "Ахмат": "Akhmat Grozny",
-    "Крылья Советов": "Krylia Sovetov",
-    "Балтика": "Baltika",
-    "Факел": "Fakel",
-    "Оренбург": "Orenburg",
-    "Акрон": "Akron",
-    "Динамо Махачкала": "Dinamo Makhachkala",
-    "Родина Москва": "Rodina Moscow",
-    "Сочи": "Sochi",
-    "Химки": "Khimki",
-    "Пари НН": "Pari NN",
+    "РПЛ": 235, "ФНЛ": 236, "АПЛ": 39, "Чемпионшип": 40,
+    "Ла Лига": 140, "Ла Лига 2": 141, "Серия А": 135,
+    "Бундеслига": 78, "Лига 1": 61, "Эредивизи": 88,
+    "Примейра": 94, "MLS": 253, "Саудовская Аравия": 307,
+    "Лига Чемпионов": 2, "Лига Европы": 3, "Лига Конференций": 848,
 }
 
 WHITELIST = [
-    (["россия", "премьер-лига"], "РПЛ"),
-    (["россия", "фнл"], "ФНЛ"),
-    (["англия", "премьер-лига"], "АПЛ"),
-    (["испания", "ла лига"], "Ла Лига"),
-    (["испания", "примера"], "Ла Лига"),
-    (["испания", "сегунда"], "Ла Лига 2"),
-    (["италия", "серия а"], "Серия А"),
-    (["германия", "бундеслига"], "Бундеслига"),
-    (["франция", "лига 1"], "Лига 1"),
-    (["саудовская"], "Саудовская Аравия"),
-    (["нидерланды", "эредивизи"], "Эредивизи"),
-    (["португалия", "примейра"], "Примейра"),
-    (["сша", "mls"], "MLS"),
-    (["англия", "чемпионшип"], "Чемпионшип"),
-    (["лига чемпионов"], "Лига Чемпионов"),
-    (["лига европы"], "Лига Европы"),
-    (["лига конференций"], "Лига Конференций"),
-    (["чемпионат мира"], "ЧМ"),
-    (["чемпионат европы"], "ЧЕ"),
-    (["лига наций"], "Лига Наций"),
+    (["россия", "премьер-лига"], "РПЛ"), (["россия", "фнл"], "ФНЛ"),
+    (["англия", "премьер-лига"], "АПЛ"), (["испания", "ла лига"], "Ла Лига"),
+    (["испания", "примера"], "Ла Лига"), (["испания", "сегунда"], "Ла Лига 2"),
+    (["италия", "серия а"], "Серия А"), (["германия", "бундеслига"], "Бундеслига"),
+    (["франция", "лига 1"], "Лига 1"), (["саудовская"], "Саудовская Аравия"),
+    (["нидерланды", "эредивизи"], "Эредивизи"), (["португалия", "примейра"], "Примейра"),
+    (["сша", "mls"], "MLS"), (["англия", "чемпионшип"], "Чемпионшип"),
+    (["лига чемпионов"], "Лига Чемпионов"), (["лига европы"], "Лига Европы"),
+    (["лига конференций"], "Лига Конференций"), (["чемпионат мира"], "ЧМ"),
+    (["чемпионат европы"], "ЧЕ"), (["лига наций"], "Лига Наций"),
 ]
 
 BLACKLIST = [
@@ -116,11 +45,6 @@ BLACKLIST = [
     "регион", "любител", "товарищеск", "баскетбол", "волейбол", "хоккей", "теннис", "кибер",
     "борьб", "бокс", "мма", "ufc", "футзал", "пляжный",
 ]
-
-RU_EN = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
-
-def transliterate(text):
-    return ''.join(RU_EN.get(c.lower(), c) for c in text)
 
 def get_clean_league(raw_name):
     if not raw_name or not isinstance(raw_name, str): return None
@@ -138,6 +62,23 @@ def get_fonbet_data_sync(url):
     except Exception: pass
     return None
 
+# --- АВТОПЕРЕВОДЧИК (Google без API-ключа) ---
+def translate_en_to_ru(text):
+    try:
+        # Убираем лишние суффиксы, которые мешают поиску (например, FC, FK)
+        clean_text = text.replace(" FC", "").replace("FK ", "").replace(" CF", "").strip()
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q={urllib.parse.quote(clean_text)}"
+        r = cffi_requests.get(url, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            ru_name = data[0][0][0]
+            # Убираем лишние приставки городов, если они есть (Зенит Санкт-Петербург -> Зенит)
+            ru_name = ru_name.replace(" Санкт-Петербург", "").replace(" Москва", "").replace(" Казань", "").strip()
+            return ru_name
+    except Exception:
+        pass
+    return text
+
 async def fetch_api_football_teams(client, league_id):
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
     params = {"league": league_id, "season": 2024}
@@ -149,10 +90,13 @@ async def fetch_api_football_teams(client, league_id):
             result = {}
             for t in teams:
                 team_info = t.get("team", {})
-                name = team_info.get("name")
+                name_en = team_info.get("name")
                 logo = team_info.get("logo")
-                if name and logo:
-                    result[f"api_{name}"] = logo
+                if name_en and logo:
+                    # Переводим название на русский
+                    name_ru = await asyncio.to_thread(translate_en_to_ru, name_en)
+                    result[name_ru] = logo
+                    result[name_en] = logo # Оставляем и английское на всякий случай
             return result
     except Exception: pass
     return {}
@@ -185,52 +129,6 @@ async def fetch_odds_and_score(event_id, sem):
         
         return odds, score_str, status_str
 
-def normalize(s):
-    return s.lower().replace(" ", "").replace("-", "").replace(".", "")
-
-def find_logo(team_name, cache):
-    if not team_name: return ""
-    
-    # 1. Проверяем словарь точных переводов
-    if team_name in TEAM_OVERRIDES:
-        override_name = TEAM_OVERRIDES[team_name]
-        if f"api_{override_name}" in cache:
-            return cache[f"api_{override_name}"]
-    
-    # 2. Прямое совпадение (русское название)
-    if f"api_{team_name}" in cache:
-        return cache[f"api_{team_name}"]
-    
-    # 3. Транслитерация + точное совпадение
-    trans_name = normalize(transliterate(team_name))
-    best_match = ""
-    best_ratio = 0.0
-    
-    for key, logo_url in cache.items():
-        if not key.startswith("api_"): continue
-        api_name = normalize(key.replace("api_", ""))
-        
-        # Точное совпадение после нормализации
-        if api_name == trans_name:
-            return logo_url
-        
-        # Префиксное совпадение (первые 4+ символа) — безопаснее, чем вхождение
-        if len(trans_name) >= 4 and len(api_name) >= 4:
-            if api_name.startswith(trans_name) or trans_name.startswith(api_name):
-                return logo_url
-        
-        # Нечеткое сравнение только для длинных названий (>=6 символов)
-        if len(trans_name) >= 6 and len(api_name) >= 6:
-            ratio = difflib.SequenceMatcher(None, trans_name, api_name).ratio()
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_match = logo_url
-    
-    # Высокий порог, чтобы не цеплять случайные совпадения
-    if best_ratio >= 0.85:
-        return best_match
-    return ""
-
 async def main():
     print("🔄 [Scraper] Запуск...")
     
@@ -241,12 +139,10 @@ async def main():
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{FIREBASE_DB_URL}/team_logos.json", timeout=15.0)
             if resp.status_code == 200 and resp.json(): logo_cache = resp.json()
-            
             resp2 = await client.get(f"{FIREBASE_DB_URL}/fetched_leagues.json", timeout=15.0)
             if resp2.status_code == 200 and resp2.json(): fetched_leagues = resp2.json()
     except Exception: pass
     print(f"   Команд в кэше: {len(logo_cache)}")
-    print(f"   Лиг скачано: {len(fetched_leagues)}")
     
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
@@ -280,22 +176,19 @@ async def main():
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
     results = await asyncio.gather(*tasks)
     
-    # Скачиваем логотипы для недостающих лиг
+    # Скачиваем логотипы
     async with httpx.AsyncClient() as client:
         for league_name, league_id in API_FOOTBALL_LEAGUES.items():
             if league_name in fetched_leagues: continue
             
-            print(f"📥 Загружаю команды для лиги: {league_name} (ID: {league_id})...")
+            print(f"📥 Загружаю и перевожу команды для лиги: {league_name}...")
             teams = await fetch_api_football_teams(client, league_id)
             if teams:
                 logo_cache.update(teams)
                 fetched_leagues.append(league_name)
-                print(f"   ✅ Получено {len(teams)} команд")
-            else:
-                print(f"   ⚠️ Не удалось получить (возможно, лига недоступна на бесплатном тарифе)")
+                print(f"   ✅ Получено {len(teams)//2} команд")
             await asyncio.sleep(1.0)
-    
-    # Сохраняем кэши
+            
     try:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/team_logos.json", json=logo_cache, timeout=30.0)
@@ -303,20 +196,30 @@ async def main():
         print("💾 Кэш сохранен в Firebase")
     except Exception: pass
     
+    # Формируем матчи (прямое совпадение по русскому названию)
     matches = {}
+    found_count = 0
     for ev, res in zip(valid_events, results):
         if not res: continue
         odds, score, status = res
+        
+        home_logo = logo_cache.get(ev["team1"], "")
+        away_logo = logo_cache.get(ev["team2"], "")
+        
+        if home_logo or away_logo:
+            found_count += 1
+            
         matches[f"fon_{ev['id']}"] = {
             "title": f"{ev['team1']} - {ev['team2']}",
             "home": ev["team1"], "away": ev["team2"],
-            "homeLogo": find_logo(ev["team1"], logo_cache),
-            "awayLogo": find_logo(ev["team2"], logo_cache),
+            "homeLogo": home_logo,
+            "awayLogo": away_logo,
             "league": ev["_league"], "status": status, "score": score,
             "start_time": ev.get("startTime"), "odds": odds,
         }
     
-    print(f"✅ Собрано матчей: {len(matches)}")
+    print(f"✅ Найдено логотипов для {found_count} из {len(matches)} матчей")
+    
     if matches:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches, timeout=30.0)
