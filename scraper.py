@@ -1,75 +1,46 @@
 import requests
-import urllib.parse
+import json
 
-def test_thesportsdb_key123(team_name):
-    print(f"\n--- TheSportsDB (Key 123): {team_name} ---")
-    url = f"https://www.thesportsdb.com/api/v1/json/123/searchteams.php?t={urllib.parse.quote(team_name)}"
+def search_fotmob(team_name):
+    print(f"\n--- Поиск в FotMob: {team_name} ---")
+    # Актуальный эндпоинт поиска
+    url = f"https://www.fotmob.com/api/data/search/suggest?term={team_name}&lang=ru"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.fotmob.com/"
+    }
+    
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, headers=headers, timeout=10)
         print(f"  Статус: {r.status_code}")
+        
         if r.status_code == 200:
             data = r.json()
-            teams = data.get("teams") or []
-            if teams:
-                badge = teams[0].get("strTeamBadge")
-                if badge:
-                    print(f"    ✅ Найдено: {teams[0].get('strTeam')}")
-                    print(f"    🔗 Логотип: {badge}")
-                    return badge
-            else:
-                print("    ⚠️ Команда не найдена")
+            suggests = data.get("suggest", [])
+            
+            if not suggests:
+                print("  ⚠️ Ничего не найдено")
+                return None
+                
+            for s in suggests:
+                # Ищем тип "team"
+                if s.get("type") == "team":
+                    payload = s.get("payload", {})
+                    team_id = payload.get("id")
+                    name = s.get("title")
+                    if team_id:
+                        logo_url = f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
+                        print(f"  ✅ Найдено: {name} (ID: {team_id})")
+                        print(f"  🔗 Логотип: {logo_url}")
+                        return logo_url
         else:
-            print(f"    ❌ Ответ: {r.text[:150]}")
+            print(f"  ❌ Ошибка: {r.text[:100]}")
     except Exception as e:
-        print(f"    ❌ Ошибка: {e}")
-    return None
-
-def test_sportsapipro_v1_search(team_name):
-    print(f"\n--- SportsAPI Pro (V1 Search): {team_name} ---")
-    # Пробуем разные варианты путей поиска
-    urls = [
-        f"https://api.sportsapipro.com/v1/football/search?q={urllib.parse.quote(team_name)}",
-        f"https://api.sportsapipro.com/v1/search?q={urllib.parse.quote(team_name)}"
-    ]
-    for url in urls:
-        try:
-            r = requests.get(url, timeout=10)
-            print(f"  URL: {url.split('?')[0]}")
-            print(f"    Статус: {r.status_code}")
-            if r.status_code == 200:
-                data = r.json()
-                # Пытаемся найти результаты
-                results = data.get("results") or data.get("data") or []
-                if results:
-                    for item in results:
-                        if item.get("participantType") == "team":
-                            team_id = item.get("id")
-                            print(f"    ✅ Найдено: {item.get('title')} (ID: {team_id})")
-                            # Формируем ссылку на логотип по шаблону V1
-                            logo_url = f"https://api.sportsapipro.com/v1/football/images/competitors/{team_id}"
-                            print(f"    🔗 Логотип: {logo_url}")
-                            return logo_url
-                else:
-                    print("    ⚠️ Результатов нет")
-            else:
-                print(f"    ❌ Ответ: {r.text[:100]}")
-        except Exception as e:
-            print(f"    ❌ Ошибка: {e}")
+        print(f"  ❌ Исключение: {e}")
     return None
 
 if __name__ == "__main__":
-    team_ru = "Зенит"
-    team_en = "Zenit"
-    
-    print(f"🚀 Тестируем логотипы для: {team_ru} ({team_en})")
-    
-    logo_tsdb = test_thesportsdb_key123(team_en)
-    logo_sapi = test_sportsapipro_v1_search(team_en)
-    
-    print("\n=== ИТОГ ===")
-    if logo_tsdb:
-        print(f"✅ TheSportsDB (ключ 123) работает! Ссылка: {logo_tsdb}")
-    elif logo_sapi:
-        print(f"✅ SportsAPI Pro V1 работает! Ссылка: {logo_sapi}")
-    else:
-        print("❌ Ни один из источников не сработал. Нужно менять подход.")
+    # Проверяем на русских названиях
+    search_fotmob("Галатасарай")
+    search_fotmob("Зенит")
+    search_fotmob("Интер")
