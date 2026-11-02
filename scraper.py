@@ -12,34 +12,12 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# Черный список (что не показываем)
-BLACKLIST = ["женщины", "u21", "u19", "u20", "молодеж", "баскетбол", "волейбол", "теннис", "кибер"]
-
-def normalize_league_name(raw_name):
-    """Превращает длинные названия Фонбета в короткие и понятные."""
-    name = raw_name.lower()
-    
-    if "англия" in name and "премьер-лига" in name: return "АПЛ"
-    if "испания" in name and "ла лига" in name: return "Ла Лига"
-    if "испания" in name and "сегунда" in name: return "Ла Лига 2"
-    if "италия" in name and "серия а" in name: return "Серия А"
-    if "германия" in name and "бундеслига" in name: return "Бундеслига"
-    if "франция" in name and "лига 1" in name: return "Лига 1"
-    if "россия" in name and "премьер-лига" in name: return "РПЛ"
-    if "россия" in name and "фнл" in name: return "ФНЛ"
-    if "саудовская" in name: return "Саудовская Аравия"
-    if "нидерланды" in name and "эредивизи" in name: return "Эредивизи"
-    if "португалия" in name and "примейра" in name: return "Примейра"
-    if "сша" in name and "mls" in name: return "MLS"
-    if "лига чемпионов" in name: return "Лига Чемпионов"
-    if "лига европы" in name: return "Лига Европы"
-    if "лига конференций" in name: return "Лига Конференций"
-    if "чемпионшип" in name: return "Чемпионшип"
-    if "чемпионат мира" in name: return "ЧМ"
-    if "чемпионат европы" in name: return "ЧЕ"
-    if "лига наций" in name: return "Лига Наций"
-    
-    return raw_name
+# Черный список слов, которые выкидывают лигу в мусор
+BLACKLIST = [
+    "женщины", "u21", "u19", "u20", "молодеж", "юнош", "резерв", "любител", 
+    "истмиан", "северная", "южная", "восточная", "западная", "регион", 
+    "баскетбол", "волейбол", "теннис", "кибер"
+]
 
 def get_fonbet_data_sync(url):
     try:
@@ -79,6 +57,35 @@ async def fetch_odds_and_score(event_id, sem):
         
         return odds, score_str, status_str
 
+def normalize_league_name(raw_name):
+    name = raw_name.lower()
+    
+    # ТОЧНЫЕ СОВПАДЕНИЯ (отсекаем "Англия. Премьер-лига. Северная" и т.д.)
+    if name == "англия. премьер-лига" or "премьер-лига. сезон" in name: return "АПЛ"
+    if name == "испания. ла лига" or "ла лига. сезон" in name: return "Ла Лига"
+    if name == "италия. серия а" or "серия а. сезон" in name: return "Серия А"
+    if name == "германия. бундеслига" or "бундеслига. сезон" in name: return "Бундеслига"
+    if name == "франция. лига 1" or "лига 1. сезон" in name: return "Лига 1"
+    if name == "россия. премьер-лига" or "премьер-лига. сезон" in name and "россия" in name: return "РПЛ"
+    
+    if "испания. сегунда" in name: return "Ла Лига 2"
+    if "россия. фнл" in name: return "ФНЛ"
+    if "саудовская" in name: return "Саудовская Аравия"
+    if "нидерланды. эредивизи" in name: return "Эредивизи"
+    if "португалия. примейра" in name: return "Примейра"
+    if "сша. mls" in name or "сша. млс" in name: return "MLS"
+    if "англия. чемпионшип" in name: return "Чемпионшип"
+    
+    if "лига чемпионов" in name: return "Лига Чемпионов"
+    if "лига европы" in name: return "Лига Европы"
+    if "лига конференций" in name: return "Лига Конференций"
+    
+    if "чемпионат мира" in name: return "ЧМ"
+    if "чемпионат европы" in name: return "ЧЕ"
+    if "лига наций" in name: return "Лига Наций"
+    
+    return raw_name
+
 def extract_leagues(data):
     leagues = {}
     for key, val in data.items():
@@ -113,7 +120,6 @@ async def main():
         valid_events = []
         
         for ev in events:
-            # Фильтр: только футбол (kind=1) и есть команды
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 if ev.get("startTime", 0) > now - 10800:
                     league_id = ev.get("sportId")
@@ -121,17 +127,15 @@ async def main():
                     
                     if not raw_league_name: continue
                     
-                    # ЖЕСТКИЙ ЧЕРНЫЙ СПИСОК
                     l_name = raw_league_name.lower()
+                    # Если есть запрещенные слова — пропускаем
                     if any(bad_word in l_name for bad_word in BLACKLIST):
                         continue
 
-                    # КРАСИВОЕ НАЗВАНИЕ
                     clean_name = normalize_league_name(raw_league_name)
                     
-                    # Берем только те, что есть в нашем нормализаторе (то есть целевые)
-                    # Либо можно добавить проверку на наличие в TARGET_LEAGUES
-                    if clean_name != raw_league_name or "премьер" in l_name or "рпл" in l_name:
+                    # Оставляем только те, что мы нормализовали (то есть целевые)
+                    if clean_name != raw_league_name:
                         ev['league_name'] = clean_name
                         valid_events.append(ev)
         
