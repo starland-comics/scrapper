@@ -35,7 +35,6 @@ WHITELIST = [
     (["лига наций"], "Лига Наций"),
 ]
 
-# ДОБАВЛЕНЫ НИЗШИЕ ДИВИЗИОНЫ ИСПАНИИ И ДРУГОЙ МУСОР
 BLACKLIST = [
     "женщины", "жен.", "u21", "u19", "u20", "u23", "юнош", "молодеж", "молодёж", "резерв",
     "ла лига 2", "ла лига 3", "примера rfef", "сегунда b", "терсера", 
@@ -48,15 +47,10 @@ BLACKLIST = [
 def get_clean_league(raw_name):
     if not raw_name or not isinstance(raw_name, str): return None
     name = raw_name.lower().strip()
-    
-    # Сначала отсекаем мусор
     for bad in BLACKLIST:
         if bad in name: return None
-            
-    # Потом ищем в белом списке
     for keywords, clean in WHITELIST:
         if all(kw in name for kw in keywords): return clean
-    
     return None
 
 def get_fonbet_data_sync(url):
@@ -99,7 +93,9 @@ async def main():
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
-    if not data or "events" not in data: return
+    if not data or "events" not in data: 
+        print("⚠️ Не удалось получить список событий.")
+        return
     
     events = data.get("events", [])
     print(f"🔍 Всего событий: {len(events)}")
@@ -108,7 +104,7 @@ async def main():
     for s in data.get("sports", []):
         if not isinstance(s, dict): continue
         if s.get("kind") != "segment": continue
-        if s.get("parentId") != 1: continue # Только футбол
+        if s.get("parentId") != 1: continue
         
         sid = s.get("id")
         sname = s.get("name")
@@ -126,14 +122,19 @@ async def main():
     for ev in events:
         if ev.get("kind") != 1 or not ev.get("team1") or not ev.get("team2"): continue
         start = ev.get("startTime", 0)
-        if not (now - 10800 < start < now + 604800): continue # 7 дней
+        # Окно 3 дня (вместо 7), чтобы не делать 1000 запросов
+        if not (now - 10800 < start < now + 259200): continue 
         sport_id = ev.get("sportId")
         if sport_id not in valid_leagues: continue
         ev["_league"] = valid_leagues[sport_id]
         valid_events.append(ev)
     
-    print(f"⚽ Матчей: {len(valid_events)}")
-    if not valid_events: return
+    print(f"⚽ Матчей для сбора кэфов: {len(valid_events)}")
+    if not valid_events: 
+        print("⚠️ Матчей нет.")
+        return
+    
+    print("⏳ Начинаю скачивать кэфы (это займет 10-30 секунд)...")
     
     sem = asyncio.Semaphore(20)
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
@@ -152,9 +153,14 @@ async def main():
             "start_time": ev.get("startTime"), "odds": odds,
         }
     
-    print(f"✅ К отправке: {len(matches)} матчей")
+    print(f"✅ Собрано матчей с кэфами: {len(matches)}")
     
     if matches:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/matches.json", json=matches)
-        print(f"🔥 Успешно сохранено!")
+        print(f"🔥 Успешно сохранено в Firebase!")
+    else:
+        print("⚠️ Кэфов не найдено.")
+
+if __name__ == "__main__":
+    asyncio.run(main())
