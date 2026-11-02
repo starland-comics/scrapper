@@ -18,6 +18,7 @@ WHITELIST = [
     (["россия", "фнл"], "ФНЛ"),
     (["англия", "премьер-лига"], "АПЛ"),
     (["испания", "ла лига"], "Ла Лига"),
+    (["испания", "примера"], "Ла Лига"),  # <-- ДОБАВЛЕНО (Фонбет называет "Примера")
     (["испания", "сегунда"], "Ла Лига 2"),
     (["италия", "серия а"], "Серия А"),
     (["германия", "бундеслига"], "Бундеслига"),
@@ -37,7 +38,11 @@ WHITELIST = [
 
 BLACKLIST = [
     "женщины", "жен.", "u21", "u19", "u20", "u23", "юнош", "молодеж", "молодёж", "резерв",
-    "ла лига 2", "ла лига 3", "примера rfef", "сегунда b", "терсера", 
+    # Детальные отсечки для низших дивизионов Испании
+    "ла лига 2", "ла лига 3", 
+    "примера rfef", "примера дивизион rfef", "примера федерасьон",
+    "сегунда b", "сегунда b rfef", "терсера", "терсера rfef",
+    # Другие низшие лиги
     "бундеслига 2", "бундеслига 3", "бундеслига-2", "бундеслига-3",
     "серия b", "серия c", "серия d", "истмиан", "северная", "южная", "восточная", "западная",
     "регион", "любител", "товарищеск", "баскетбол", "волейбол", "хоккей", "теннис", "кибер",
@@ -47,8 +52,10 @@ BLACKLIST = [
 def get_clean_league(raw_name):
     if not raw_name or not isinstance(raw_name, str): return None
     name = raw_name.lower().strip()
+    # 1. Сначала отсекаем мусор (низшие дивизионы, баскетбол, женщин)
     for bad in BLACKLIST:
         if bad in name: return None
+    # 2. Потом ищем в белом списке
     for keywords, clean in WHITELIST:
         if all(kw in name for kw in keywords): return clean
     return None
@@ -110,33 +117,38 @@ async def main():
         sname = s.get("name")
         if sid and sname: league_map[int(sid)] = sname
     
+    # === ДИАГНОСТИКА ИСПАНСКИХ ЛИГ ===
+    print("\n🇪🇸 Все Испанские лиги в справочнике Фонбета:")
+    spain_count = 0
+    for lid, lname in league_map.items():
+        if "испания" in lname.lower():
+            print(f"   {lid}: {lname}")
+            spain_count += 1
+    if spain_count == 0:
+        print("   ⚠️ Испанских лиг вообще нет в справочнике!")
+    print()
+    
     valid_leagues = {}
     for lid, raw_name in league_map.items():
         clean = get_clean_league(raw_name)
         if clean: valid_leagues[lid] = clean
     
     print(f"✅ Целевых лиг: {len(valid_leagues)}")
+    if valid_leagues: print(f"   {', '.join(sorted(set(valid_leagues.values())))}")
     
     now = time.time()
     valid_events = []
     for ev in events:
         if ev.get("kind") != 1 or not ev.get("team1") or not ev.get("team2"): continue
         start = ev.get("startTime", 0)
-        
-        # ОКНО В 7 ДНЕЙ (604800 секунд)
         if not (now - 10800 < start < now + 604800): continue 
-        
         sport_id = ev.get("sportId")
         if sport_id not in valid_leagues: continue
         ev["_league"] = valid_leagues[sport_id]
         valid_events.append(ev)
     
     print(f"⚽ Матчей для сбора кэфов: {len(valid_events)}")
-    if not valid_events: 
-        print("⚠️ Матчей нет.")
-        return
-    
-    print("⏳ Начинаю скачивать кэфы (это займет 10-60 секунд)...")
+    if not valid_events: return
     
     sem = asyncio.Semaphore(20)
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
@@ -156,6 +168,13 @@ async def main():
         }
     
     print(f"✅ Собрано матчей с кэфами: {len(matches)}")
+    
+    # Считаем сколько по каждой лиге
+    from collections import Counter
+    league_counts = Counter(m["league"] for m in matches.values())
+    print("📊 Разбивка по лигам:")
+    for lg, cnt in sorted(league_counts.items()):
+        print(f"   {lg}: {cnt}")
     
     if matches:
         async with httpx.AsyncClient() as client:
