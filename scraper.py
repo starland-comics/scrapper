@@ -3,6 +3,7 @@ import time
 import httpx
 import json
 import urllib.parse
+import difflib
 from curl_cffi import requests as cffi_requests
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
@@ -13,106 +14,11 @@ OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-comp
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
 
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
+TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
 FOTMOB_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://www.fotmob.com/"
-}
-
-# СЛОВАРЬ ТОЧНЫХ НАЗВАНИЙ (ВСЕ КЛУБЫ ИЗ ТВОЕГО СПИСКА)
-TEAM_OVERRIDES = {
-    "Байер 04": "Bayer Leverkusen",
-    "Майнц 05": "Mainz",
-    "Интер Милан": "Inter",
-    "Комо": "Como",
-    "Атлетик Бильбао": "Athletic Bilbao",
-    "Флитвуд Таун": "Fleetwood Town",
-    "Суонси Сити": "Swansea City",
-    "Рексэм": "Wrexham",
-    "Кардифф Сити": "Cardiff City",
-    "Виктория БА": "Viktoria Plzen",
-    "Эльферсберг": "Elversberg",
-    "Унион Берлин": "Union Berlin",
-    "Шальке 04": "Schalke 04",
-    "Хольштайн Киль": "Holstein Kiel",
-    "Левски София": "Levski Sofia",
-    "Неймеген": "NEC Nijmegen",
-    "Юнион Сен-Жиллуаз": "Union St. Gilloise",
-    "Арарат-Армения": "Ararat-Armenia",
-    "Хапоэль Беэр-Шева": "Hapoel Be'er Sheva",
-    "Лех Познан": "Lech Poznan",
-    "Линкольн Ред Импс": "Lincoln Red Imps",
-    "Хайдук Сплит": "Hajduk Split",
-    "Интер Эскальдес": "Inter Club d'Escaldes",
-    "Мьельбю": "Mjallby",
-    "Унив. Крайова": "Universitatea Craiova",
-    "Эгнатия": "Egnatia",
-    "Иберия 1999": "Iberia 1999",
-    "Синт-Трёйден": "Sint-Truiden",
-    "Кауно Жальгирис": "Kauno Zalgiris",
-    "Аль-Сиб": "Al-Sib",
-    "Аль-Шорта": "Al-Shorta",
-    "Аль-Кадисия Хубар": "Al-Qadsiah",
-    "Шанхай Порт": "Shanghai Port",
-    "Джохор Дарул Такзим": "Johor Darul Ta'zim",
-    "Конган": "Khon Kaen",
-    "Кёто Санга": "Kyoto Sanga",
-    "Порт": "Porto",
-    "Эстеглаль Тегеран": "Esteghlal",
-    "Аль-Шамаль": "Al-Shamal",
-    "Аль-Хиляль Рияд": "Al-Hilal",
-    "Шабаб Аль-Ахли Дубай": "Shabab Al-Ahli",
-    "Шахтёр Донецк": "Shakhtar Donetsk",
-    "Спортинг Лиссабон": "Sporting CP",
-    "Слован Братислава": "Slovan Bratislava",
-    "Сабах Баку": "Sabah",
-    "ПСВ Эйндховен": "PSV",
-    "Спарта Роттердам": "Sparta Rotterdam",
-    "Алверка": "Alverca",
-    "Виктория Гимарайнш": "Vitoria Guimaraes",
-    "Каза Пиа": "Casa Pia",
-    "Эштрелла Амадора": "Estrela Amadora",
-    "Волна Ковернино": "Volna",
-    "Волга Ульяновск": "Volga Ulyanovsk",
-    "Динамо Махачкала": "Dinamo Makhachkala",
-    "Локомотив Москва": "Lokomotiv Moscow",
-    "Родина": "Rodina Moscow",
-    "Акрон": "Akron Tolyatti",
-    "ЦСКА Москва": "CSKA Moscow",
-    "Спартак Москва": "Spartak Moscow",
-    "Динамо Москва": "Dinamo Moscow",
-    "Арсенал Тула": "Arsenal Tula",
-    "Торпедо Москва": "Torpedo Moscow",
-    "Текстильщик Иваново": "Tekstilshchik",
-    "Велес Москва": "Veles",
-    "Аль-Холуд": "Al-Kholood",
-    "Аль-Халидж": "Al-Khaleej",
-    "Абха": "Abha",
-    "Аль-Шабаб Рияд": "Al-Shabab",
-    "Аль-Рияд": "Al-Riyadh",
-    "Аль-Наср Рияд": "Al-Nassr",
-    "Неом": "Neom",
-    "Аль-Дирийя": "Al-Diriyah",
-    "ДС Юнайтед": "DC United",
-    "Нью-Йорк Ред Буллс": "New York Red Bulls",
-    "Атланта Юнайтед": "Atlanta United",
-    "Интер Майами": "Inter Miami",
-    "Нью-Ингланд Революшн": "New England Revolution",
-    "Филадельфия Юнион": "Philadelphia Union",
-    "Ванкувер Уайткэпс": "Vancouver Whitecaps",
-    "Колорадо Рэпидс": "Colorado Rapids",
-    "Сан-Диего": "San Diego FC",
-    "Лос-Анджелес Гэлакси": "LA Galaxy",
-    "Остин": "Austin FC",
-    "Миннесота Юнайтед": "Minnesota United",
-    "Сан-Хосе Эрктвейкс": "San Jose Earthquakes",
-    "Сент-Луис Сити": "St. Louis City",
-    "Коджаелиспор": "Kocaelispor",
-    "Амедспор": "Amedspor",
-    "Истанбул Башакшехир": "Istanbul Basaksehir",
-    "Эрзурумспор": "Erzurumspor",
-    "Чурум": "Corum",
-    "Альянспор": "Alyanspor"
 }
 
 BLACKLIST_WORDS = ["люб", "жен", "u21", "u19", "u20", "юнош", "молод", "угл", "жк", "кк", "статистика"]
@@ -124,21 +30,72 @@ def is_valid_match(team1, team2, league):
             return False
     return True
 
-def search_fotmob_logo(team_name):
-    search_query = TEAM_OVERRIDES.get(team_name, team_name)
+def translate_ru_to_en(text):
     try:
-        url = f"{FOTMOB_SEARCH_URL}?term={urllib.parse.quote(search_query)}&lang=ru"
-        r = cffi_requests.get(url, headers=FOTMOB_HEADERS, impersonate="chrome120", timeout=10)
+        params = {"client": "gtx", "sl": "ru", "tl": "en", "dt": "t", "q": text}
+        r = cffi_requests.get(TRANSLATE_URL, params=params, timeout=5)
         if r.status_code == 200:
             data = r.json()
-            for group in data:
-                for item in group.get("suggestions", []):
-                    if item.get("type") == "team":
-                        team_id = item.get("id")
-                        if team_id:
-                            return f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
+            translated = data[0][0][0]
+            # Очищаем от лишних приставок
+            translated = translated.replace(" FC", "").replace("FC ", "").replace(" FK", "").replace("FK ", "").strip()
+            return translated
     except Exception:
         pass
+    return text
+
+def clean_team_name(name):
+    """Убирает лишние приставки для лучшего поиска"""
+    bad_words = ["ФК", "ФК ", " 04", " 05", " Москва", " Санкт-Петербург", " (люб)", " (жен)"]
+    for w in bad_words:
+        name = name.replace(w, "")
+    return name.strip()
+
+def search_fotmob_logo(team_name):
+    # Варианты запросов для поиска
+    queries = []
+    
+    # 1. Оригинальное название (русское)
+    queries.append(team_name)
+    
+    # 2. Очищенное русское название
+    cleaned = clean_team_name(team_name)
+    if cleaned != team_name: queries.append(cleaned)
+    
+    # 3. Перевод на английский
+    trans = translate_ru_to_en(team_name)
+    if trans != team_name: queries.append(trans)
+    
+    # 4. Очищенный перевод
+    trans_clean = clean_team_name(trans)
+    if trans_clean not in queries: queries.append(trans_clean)
+
+    for q in queries:
+        try:
+            url = f"{FOTMOB_SEARCH_URL}?term={urllib.parse.quote(q)}&lang=ru"
+            r = cffi_requests.get(url, headers=FOTMOB_HEADERS, impersonate="chrome120", timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                # Ищем среди всех групп и предложений
+                for group in data:
+                    for item in group.get("suggestions", []):
+                        if item.get("type") == "team":
+                            found_name = item.get("name", "")
+                            team_id = item.get("id")
+                            
+                            # Проверка на нечеткое совпадение (если в запросе > 4 символов)
+                            if team_id and len(q) > 4:
+                                ratio = difflib.SequenceMatcher(None, q.lower(), found_name.lower()).ratio()
+                                if ratio > 0.5: # Если похоже хотя бы на 50%
+                                    return f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
+                            
+                            # Для коротких запросов (например, "Порт") берем первый результат
+                            elif team_id and len(q) <= 4:
+                                return f"https://images.fotmob.com/image_resources/logo/teamlogo/{team_id}.png"
+                                
+        except Exception:
+            pass
+            
     return ""
 
 def fetch_olimp_matches(url):
@@ -151,7 +108,6 @@ def fetch_olimp_matches(url):
     for attempt in range(3):
         try:
             print(f"   Попытка {attempt + 1}/3...")
-            # УВЕЛИЧЕН ТАЙМАУТ ДО 120 СЕКУНД
             r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=120)
             if r.status_code == 200:
                 return r.json()
@@ -187,7 +143,7 @@ async def main():
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
     print(f"   Получено групп: {len(live_data) if live_data else 0}")
     
-    print("📥 Загружаю ЛИНИЮ с Olimpbet (ожидание до 2 минут)...")
+    print("📥 Загружаю ЛИНИЮ с Olimpbet...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
     print(f"   Получено групп: {len(line_data) if line_data else 0}")
     
@@ -211,6 +167,7 @@ async def main():
 
     print(f"⚽ Найдено валидных матчей: {len(all_matches)}")
 
+    # Умный поиск логотипов
     missing_teams = set()
     for ev, _, _ in all_matches:
         t1 = ev.get("team1Name")
@@ -219,15 +176,18 @@ async def main():
         if t2 and t2 not in logo_cache: missing_teams.add(t2)
 
     if missing_teams:
-        print(f"🔎 Ищу логотипы в FotMob для {len(missing_teams)} команд...")
+        print(f"🔎 Умный поиск логотипов для {len(missing_teams)} команд...")
         for team in missing_teams:
+            # Если уже пытались и не нашли (""), не тратим время
+            if logo_cache.get(team) == "": continue
+            
             logo = await asyncio.to_thread(search_fotmob_logo, team)
             if logo:
                 logo_cache[team] = logo
                 print(f"   ✅ {team}")
             else:
                 logo_cache[team] = ""
-                print(f"   ⚠️ {team} (не найдено)")
+                print(f"   ❌ {team} (не найдено)")
             await asyncio.sleep(0.1)
 
     await firebase_put("team_logos", logo_cache)
