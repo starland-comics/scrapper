@@ -3,6 +3,7 @@ import time
 import httpx
 import json
 import urllib.parse
+import difflib
 from curl_cffi import requests as cffi_requests
 
 BASE_URL = "https://line-lb51.bk6bba-resources.com"
@@ -16,6 +17,7 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
+# ID лиг API-Football (европейская ЛЧ = 2)
 API_FOOTBALL_LEAGUES = {
     "РПЛ": 235, "ФНЛ": 236, "АПЛ": 39, "Чемпионшип": 40,
     "Ла Лига": 140, "Ла Лига 2": 141, "Серия А": 135,
@@ -44,6 +46,7 @@ BLACKLIST = [
     "серия b", "серия c", "серия d", "истмиан", "северная", "южная", "восточная", "западная",
     "регион", "любител", "товарищеск", "баскетбол", "волейбол", "хоккей", "теннис", "кибер",
     "борьб", "бокс", "мма", "ufc", "футзал", "пляжный",
+    "афк", "afc", # исключаем азиатскую ЛЧ
 ]
 
 def get_clean_league(raw_name):
@@ -77,30 +80,22 @@ def translate_en_to_ru(text):
     return text
 
 async def fetch_api_football_teams(client, league_id, season):
-    """Пробует разные сезоны, если базовый не работает."""
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
-    for s in [season, 2024, 2023, 2025]:
+    for s in [season, 2024, 2023, 2025, 2022]:
         params = {"league": league_id, "season": s}
         try:
             resp = await client.get(f"{API_FOOTBALL_BASE}/teams", headers=headers, params=params, timeout=20.0)
             if resp.status_code != 200:
-                print(f"      ⚠️ API вернул {resp.status_code} (сезон {s})")
                 continue
-            
             data = resp.json()
-            # Проверка на ошибки в ответе
             errors = data.get("errors")
             if errors and isinstance(errors, dict) and len(errors) > 0:
-                print(f"      ⚠️ Ошибка API (сезон {s}): {errors}")
                 continue
-            
             teams = data.get("response", [])
             if not teams:
-                print(f"      ⚠️ Пусто (сезон {s})")
                 continue
-            
             result = {}
-            print(f"      🔄 Перевожу {len(teams)} команд на русский...")
+            print(f"      🔄 Перевожу {len(teams)} команд (сезон {s})...")
             for i, t in enumerate(teams):
                 team_info = t.get("team", {})
                 name_en = team_info.get("name")
@@ -113,8 +108,27 @@ async def fetch_api_football_teams(client, league_id, season):
                     print(f"         ...переведено {i + 1}/{len(teams)}")
             return result
         except Exception as e:
-            print(f"      ⚠️ Исключение (сезон {s}): {e}")
             continue
+    return {}
+
+async def search_team_logo(client, team_name):
+    """Fallback: ищет команду через /teams?search=..."""
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    trans_name = team_name.replace(" ", "%20")
+    try:
+        resp = await client.get(f"{API_FOOTBALL_BASE}/teams", headers=headers, params={"search": team_name}, timeout=15.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            teams = data.get("response", [])
+            for t in teams:
+                team_info = t.get("team", {})
+                name_en = team_info.get("name")
+                logo = team_info.get("logo")
+                if name_en and logo:
+                    name_ru = await asyncio.to_thread(translate_en_to_ru, name_en)
+                    return {name_ru: logo, name_en: logo}
+    except Exception:
+        pass
     return {}
 
 async def fetch_odds_and_score(event_id, sem):
@@ -159,11 +173,9 @@ async def main():
             if resp2.status_code == 200 and resp2.json(): fetched_leagues = resp2.json()
     except Exception: pass
     print(f"   Команд в кэше: {len(logo_cache)}")
-    print(f"   Лиг уже скачано: {len(fetched_leagues)}")
     
-    # ЗАЩИТА ОТ БАГА: если кэш пуст, но лиги помечены скачанными — сбрасываем
     if len(logo_cache) < 10 and len(fetched_leagues) > 0:
-        print("⚠️ Кэш пуст, но лиги помечены как скачанные. Сбрасываю список лиг...")
+        print("⚠️ Кэш пуст, сбрасываю список лиг...")
         fetched_leagues = []
         try:
             async with httpx.AsyncClient() as client:
@@ -173,9 +185,7 @@ async def main():
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
-    if not data or "events" not in data: 
-        print("⚠️ Не удалось получить события Fonbet")
-        return
+    if not data or "events" not in data: return
     
     events = data.get("events", [])
     league_map = {}
@@ -204,7 +214,6 @@ async def main():
     tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
     results = await asyncio.gather(*tasks)
     
-    # Скачиваем логотипы
     async with httpx.AsyncClient() as client:
         for league_name, league_id in API_FOOTBALL_LEAGUES.items():
             if league_name in fetched_leagues: 
@@ -218,9 +227,27 @@ async def main():
                 fetched_leagues.append(league_name)
                 print(f"   ✅ Получено {len(teams)//2} уникальных команд")
             else:
-                print(f"   ❌ Не удалось загрузить (проверь ключ/лигу/сезон)")
+                print(f"   ❌ Не удалось загрузить")
             await asyncio.sleep(1.5)
-            
+    
+    # Fallback-поиск для команд, которых нет в кэше
+    missing_teams = set()
+    for ev in valid_events:
+        if ev["team1"] not in logo_cache: missing_teams.add(ev["team1"])
+        if ev["team2"] not in logo_cache: missing_teams.add(ev["team2"])
+    
+    if missing_teams:
+        print(f"🔎 Fallback-поиск для {len(missing_teams)} команд...")
+        for team in missing_teams:
+            print(f"   Ищу: {team}...")
+            found = await search_team_logo(client, team)
+            if found:
+                logo_cache.update(found)
+                print(f"      ✅ Найдено!")
+            else:
+                print(f"      ⚠️ Не найдено")
+            await asyncio.sleep(0.5)
+    
     try:
         async with httpx.AsyncClient() as client:
             await client.put(f"{FIREBASE_DB_URL}/team_logos.json", json=logo_cache, timeout=30.0)
