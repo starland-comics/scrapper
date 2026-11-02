@@ -29,6 +29,27 @@ INTL_LEAGUE_WORDS = [
     "olympic", "friendly international", "confederations"
 ]
 
+# Названия стран — для отсева сборных
+COUNTRY_NAMES = {
+    "russia", "germany", "france", "italy", "spain", "england", "portugal",
+    "brazil", "argentina", "tunisia", "thailand", "switzerland", "austria",
+    "belgium", "netherlands", "croatia", "serbia", "greece", "turkey",
+    "japan", "korea", "china", "india", "australia", "mexico", "usa",
+    "canada", "morocco", "egypt", "saudi arabia", "uae", "qatar", "iran",
+    "iraq", "uzbekistan", "kazakhstan", "ukraine", "poland", "czech",
+    "slovakia", "hungary", "romania", "bulgaria", "denmark", "norway",
+    "sweden", "finland", "iceland", "ireland", "scotland", "wales",
+    "russia", "россия", "германия", "франция", "италия", "испания",
+    "англия", "португалия", "бразилия", "аргентина", "тунис", "таиланд",
+    "швейцария", "австрия", "бельгия", "нидерланды", "хорватия", "сербия",
+    "греция", "турция", "япония", "корея", "китай", "индия", "австралия",
+    "мексика", "сша", "канада", "марокко", "египет", "саудовская аравия",
+    "оаэ", "катар", "иран", "ирак", "узбекистан", "казахстан", "украина",
+    "польша", "чехия", "словакия", "венгрия", "румыния", "болгария",
+    "дания", "норвегия", "швеция", "финляндия", "исландия", "ирландия",
+    "шотландия", "уэльс",
+}
+
 TEAM_OVERRIDES = {
     "Байер 04": "Bayer Leverkusen", "Майнц 05": "Mainz", "Интер Милан": "Inter",
     "Комо": "Como", "Атлетик Бильбао": "Athletic Bilbao", "Спортинг Лиссабон": "Sporting CP",
@@ -84,6 +105,17 @@ def league_to_country(comp_name: str) -> str | None:
         if marker in low: return country
     return None
 
+def is_national_team(name: str, league: str = "") -> bool:
+    n = _normalize(name)
+    l = (league or "").lower()
+    if n in COUNTRY_NAMES:
+        return True
+    if any(w in l for w in ("national", "international", "world cup", "euro ", "nations")):
+        return True
+    if "сборная" in n or "national" in n:
+        return True
+    return False
+
 def make_fallback_logo(name: str) -> str:
     initials = "".join(w[0] for w in name.split()[:2]).upper() or "?"
     color = "#" + hashlib.md5(name.encode("utf-8")).hexdigest()[:6]
@@ -117,7 +149,7 @@ def _cache_from_fb(raw) -> dict:
     if not raw or not isinstance(raw, dict): return {}
     return {_decode_key(k): v for k, v in raw.items()}
 
-# ---------- БАТЧ-ПЕРЕВОД (фикс: склейка всех сегментов) ----------
+# ---------- БАТЧ-ПЕРЕВОД ----------
 def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
     if not texts: return {}
     SEP = " | "
@@ -143,15 +175,20 @@ def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
         print(f"   ⚠️ Batch translate error: {e}")
     return {t: t for t in texts}
 
-# ---------- ВЫБОР КАНДИДАТА (двухпроходный, без жёсткого штрафа) ----------
-def pick_best_candidate(cands: list[dict], target_name: str, country_hint: str | None) -> dict | None:
+# ---------- ВЫБОР КАНДИДАТА ----------
+def pick_best_candidate(cands, target_name, country_hint):
     if not cands: return None
+    # 1) Жёстко выкидываем сборные
+    cands = [c for c in cands if not is_national_team(c.get("name", ""), c.get("league", ""))]
+    if not cands: return None
+
     target = _normalize(target_name)
     country_hint = (country_hint or "").lower()
 
     def base_score(c):
         return fuzz.token_set_ratio(target, _normalize(c.get("name", ""))) * 10 + min(c.get("score", 0), 200)
 
+    # 2) Если знаем страну лиги — сначала ищем среди кандидатов из этой страны
     if country_hint:
         matching = [c for c in cands
                     if country_hint in (c.get("league") or "").lower()
@@ -159,6 +196,7 @@ def pick_best_candidate(cands: list[dict], target_name: str, country_hint: str |
         if matching:
             return max(matching, key=base_score)
 
+    # 3) Иначе — лучший по имени среди всех оставшихся
     return max(cands, key=base_score)
 
 # ---------- ПОИСК ЛОГОТИПОВ ----------
@@ -189,29 +227,43 @@ def search_fotmob_candidates(team_name: str, name_en: str) -> list[dict]:
     return out
 
 async def search_thesportsdb(name_en: str) -> list[dict]:
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get("https://www.thesportsdb.com/api/v1/json/3/searchteams.php",
-                                 params={"t": name_en})
-            if r.status_code != 200: return []
-            teams = (r.json() or {}).get("teams") or []
-            return [{"name": t.get("strTeam", ""),
-                     "league": (t.get("strLeague") or "").lower(),
-                     "country": (t.get("strCountry") or "").lower(),
-                     "logo": t.get("strBadge"), "source": "thesportsdb"}
-                    for t in teams if t.get("strBadge")]
-    except Exception:
-        return []
+    variants = [name_en, f"{name_en} FC", f"FC {name_en}"]
+    seen, out = set(), []
+    for q in variants:
+        if q in seen: continue
+        seen.add(q)
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get("https://www.thesportsdb.com/api/v1/json/3/searchteams.php",
+                                     params={"t": q})
+                if r.status_code != 200: continue
+                for t in (r.json() or {}).get("teams") or []:
+                    if not t.get("strBadge"): continue
+                    if (t.get("strSport") or "").lower() != "soccer": continue
+                    team_name = t.get("strTeam", "")
+                    if "national" in team_name.lower(): continue
+                    out.append({"name": team_name,
+                                "league": (t.get("strLeague") or "").lower(),
+                                "country": (t.get("strCountry") or "").lower(),
+                                "logo": t.get("strBadge"),
+                                "source": "thesportsdb"})
+        except Exception:
+            continue
+    return out
 
 async def search_apifootball(name_en: str) -> list[dict]:
     key = os.getenv("APIFOOTBALL_KEY")
-    if not key: return []
+    if not key:
+        print("   ⚠️ APIFOOTBALL_KEY не задан — пропускаю API-Football")
+        return []
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get("https://v3.football.api-sports.io/teams",
                                  params={"search": name_en},
                                  headers={"x-apisports-key": key})
-            if r.status_code != 200: return []
+            if r.status_code != 200:
+                print(f"   ⚠️ API-Football {r.status_code}: {r.text[:100]}")
+                return []
             out = []
             for item in (r.json() or {}).get("response", []):
                 t = item.get("team", {})
@@ -219,9 +271,11 @@ async def search_apifootball(name_en: str) -> list[dict]:
                 out.append({"name": t.get("name", ""),
                             "league": (t.get("country") or "").lower(),
                             "country": (t.get("country") or "").lower(),
-                            "logo": t.get("logo"), "source": "apifootball"})
+                            "logo": t.get("logo"),
+                            "source": "apifootball"})
             return out
-    except Exception:
+    except Exception as e:
+        print(f"   ⚠️ API-Football exception: {e}")
         return []
 
 async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: dict) -> str:
