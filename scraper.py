@@ -1,83 +1,75 @@
 import requests
 import urllib.parse
 
-def test_sportsapi_pro(team_name):
-    print(f"\n--- SportsAPI Pro (V3 Search): {team_name} ---")
-    # Пробуем с ключом и без (вдруг поиск тоже открыт)
-    urls = [
-        f"https://api.sportsapipro.com/v3/football/search?q={urllib.parse.quote(team_name)}",
-        f"https://api.sportsapipro.com/v1/search?q={urllib.parse.quote(team_name)}"
-    ]
-    headers_variants = [
-        {}, # без ключа
-        {"x-api-key": "test"} # с фейковым ключом (на случай если проверяют наличие)
-    ]
-    
-    for url in urls:
-        for headers in headers_variants:
-            try:
-                r = requests.get(url, headers=headers, timeout=10)
-                print(f"  URL: {url.split('?')[0]}, Headers: {list(headers.keys())}")
-                print(f"    Статус: {r.status_code}")
-                if r.status_code == 200:
-                    data = r.json()
-                    results = data.get("results", [])
-                    if results:
-                        # Ищем тип team
-                        for item in results:
-                            if item.get("participantType") == "team":
-                                logo = item.get("logo")
-                                print(f"    ✅ Найдено: {item.get('title')}")
-                                print(f"    🔗 Логотип: {logo}")
-                                return logo
-                    else:
-                        print("    ⚠️ Результатов нет")
-                else:
-                    print(f"    ❌ Ответ: {r.text[:100]}")
-            except Exception as e:
-                print(f"    ❌ Ошибка: {e}")
-    return None
-
-def test_thesportsdb(team_name):
-    print(f"\n--- TheSportsDB (Free Key 3): {team_name} ---")
-    # TheSportsDB ищет по английскому названию
-    url = f"https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t={urllib.parse.quote(team_name)}"
+def test_thesportsdb_key123(team_name):
+    print(f"\n--- TheSportsDB (Key 123): {team_name} ---")
+    url = f"https://www.thesportsdb.com/api/v1/json/123/searchteams.php?t={urllib.parse.quote(team_name)}"
     try:
         r = requests.get(url, timeout=10)
-        print(f"  URL: {url}")
-        print(f"    Статус: {r.status_code}")
+        print(f"  Статус: {r.status_code}")
         if r.status_code == 200:
             data = r.json()
             teams = data.get("teams") or []
             if teams:
-                for team in teams[:2]: # первые 2 результата
-                    badge = team.get("strTeamBadge") or team.get("strTeamLogo")
-                    if badge:
-                        print(f"    ✅ Найдено: {team.get('strTeam')}")
-                        print(f"    🔗 Логотип: {badge}")
-                        return badge
+                badge = teams[0].get("strTeamBadge")
+                if badge:
+                    print(f"    ✅ Найдено: {teams[0].get('strTeam')}")
+                    print(f"    🔗 Логотип: {badge}")
+                    return badge
             else:
                 print("    ⚠️ Команда не найдена")
         else:
-            print(f"    ❌ Ответ: {r.text[:100]}")
+            print(f"    ❌ Ответ: {r.text[:150]}")
     except Exception as e:
         print(f"    ❌ Ошибка: {e}")
     return None
 
+def test_sportsapipro_v1_search(team_name):
+    print(f"\n--- SportsAPI Pro (V1 Search): {team_name} ---")
+    # Пробуем разные варианты путей поиска
+    urls = [
+        f"https://api.sportsapipro.com/v1/football/search?q={urllib.parse.quote(team_name)}",
+        f"https://api.sportsapipro.com/v1/search?q={urllib.parse.quote(team_name)}"
+    ]
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=10)
+            print(f"  URL: {url.split('?')[0]}")
+            print(f"    Статус: {r.status_code}")
+            if r.status_code == 200:
+                data = r.json()
+                # Пытаемся найти результаты
+                results = data.get("results") or data.get("data") or []
+                if results:
+                    for item in results:
+                        if item.get("participantType") == "team":
+                            team_id = item.get("id")
+                            print(f"    ✅ Найдено: {item.get('title')} (ID: {team_id})")
+                            # Формируем ссылку на логотип по шаблону V1
+                            logo_url = f"https://api.sportsapipro.com/v1/football/images/competitors/{team_id}"
+                            print(f"    🔗 Логотип: {logo_url}")
+                            return logo_url
+                else:
+                    print("    ⚠️ Результатов нет")
+            else:
+                print(f"    ❌ Ответ: {r.text[:100]}")
+        except Exception as e:
+            print(f"    ❌ Ошибка: {e}")
+    return None
+
 if __name__ == "__main__":
-    # Тестируем на примере Зенита (можно заменить на любой клуб)
     team_ru = "Зенит"
-    team_en = "Zenit" 
+    team_en = "Zenit"
     
-    print(f"🚀 Тестируем получение логотипа для: {team_ru} ({team_en})")
+    print(f"🚀 Тестируем логотипы для: {team_ru} ({team_en})")
     
-    logo_sportsapi = test_sportsapi_pro(team_en)
-    logo_tsdb = test_thesportsdb(team_en)
+    logo_tsdb = test_thesportsdb_key123(team_en)
+    logo_sapi = test_sportsapipro_v1_search(team_en)
     
     print("\n=== ИТОГ ===")
-    if logo_sportsapi:
-        print(f"✅ SportsAPI Pro работает! Ссылка: {logo_sportsapi}")
-    elif logo_tsdb:
-        print(f"✅ TheSportsDB работает! Ссылка: {logo_tsdb}")
+    if logo_tsdb:
+        print(f"✅ TheSportsDB (ключ 123) работает! Ссылка: {logo_tsdb}")
+    elif logo_sapi:
+        print(f"✅ SportsAPI Pro V1 работает! Ссылка: {logo_sapi}")
     else:
         print("❌ Ни один из источников не сработал. Нужно менять подход.")
