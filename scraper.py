@@ -12,7 +12,6 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# Белый список названий лиг (в нижнем регистре)
 WHITELIST = [
     ("англия", "премьер-лига", "АПЛ"),
     ("россия", "премьер-лига", "РПЛ"),
@@ -47,30 +46,19 @@ def get_fonbet_data_sync(url):
 def get_clean_league_name(raw_name):
     if not raw_name: return None
     name = raw_name.lower()
-    # Жесткая отсечка мусора
-    if any(x in name for x in ["женщины", "u21", "u19", "юнош", "молодеж", "бундеслига 3", "серия b", "серия c"]):
+    if any(x in name for x in ["женщины", "u21", "u19", "юнош", "молодеж", "бундеслига 3", "бундеслига-3", "серия b", "серия c"]):
         return None
-
     for keys, _, clean_name in WHITELIST:
         if keys in name:
             return clean_name
     return None
 
-async def fetch_event_details(event_id, sem):
+async def fetch_odds_and_score(event_id, sem):
     async with sem:
         url = f"{BASE_URL}/events/event?eventId={event_id}&scopeMarket=1600&lang=ru"
         data = await asyncio.to_thread(get_fonbet_data_sync, url)
         if not data: return None
         
-        event_info = data.get("event", {})
-        # Фонбет отдает название лиги в поле "competition" или "sport"
-        raw_league = event_info.get("competition", "")
-        if not raw_league: raw_league = event_info.get("sport", "")
-        
-        clean_name = get_clean_league_name(raw_league)
-        if not clean_name: return None
-        
-        # Достаем кэфы
         odds = {"1": None, "X": None, "2": None}
         for cf in data.get("customFactors", []):
             for f in cf.get("factors", []):
@@ -83,6 +71,7 @@ async def fetch_event_details(event_id, sem):
         
         if not odds["1"]: return None
         
+        event_info = data.get("event", {})
         score1 = event_info.get("score1")
         score2 = event_info.get("score2")
         minute = event_info.get("time", "")
@@ -91,12 +80,7 @@ async def fetch_event_details(event_id, sem):
         score_str = f"{score1} : {score2}" if score1 is not None and place == "live" else "VS"
         status_str = f"LIVE {minute}'" if place == "live" else "Скоро"
         
-        return {
-            "league": clean_name,
-            "odds": odds,
-            "score": score_str,
-            "status": status_str
-        }
+        return odds, score_str, status_str
 
 async def main():
     print("🔄 [Scraper] Запуск...")
@@ -107,33 +91,63 @@ async def main():
         events = data.get("events", [])
         print(f"🔍 Всего событий: {len(events)}")
 
+        # 1. Собираем все лиги из ответа
+        raw_leagues = {}
+        for t in data.get("tournamentInfos", []):
+            if isinstance(t, dict):
+                raw_leagues[int(t.get("id"))] = t.get("name") or t.get("rusName")
+                
+        for s in data.get("sports", []):
+            if isinstance(s, dict):
+                for r in s.get("regions", []):
+                    if isinstance(r, dict):
+                        for c in r.get("competitions", []):
+                            if isinstance(c, dict) and c.get("id"):
+                                raw_leagues[int(c.get("id"))] = c.get("name") or c.get("rusName")
+                                
+        # 2. Фильтруем лиги по Белому Списку
+        valid_leagues = {}
+        for lid, lname in raw_leagues.items():
+            clean = get_clean_league_name(lname)
+            if clean:
+                valid_leagues[lid] = clean
+                
+        print(f"✅ Целевых лиг найдено: {len(valid_leagues)}")
+        if valid_leagues:
+            print(f"Примеры: {list(valid_leagues.values())[:5]}")
+
+        # 3. Отбираем матчи
         now = time.time()
         valid_events = []
         
-        # Берем только футбол (kind=1) на ближайшие 2 дня
         for ev in events:
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 start = ev.get("startTime", 0)
                 if start > now - 10800 and start < now + 172800: 
-                    valid_events.append(ev)
+                    sport_id = ev.get("sportId")
+                    if sport_id in valid_leagues:
+                        ev['league_name'] = valid_leagues[sport_id]
+                        valid_events.append(ev)
         
-        print(f"⚽ Футбольных матчей (2 дня): {len(valid_events)}")
+        print(f"⚽ Матчей из целевых лиг: {len(valid_events)}")
         
+        # 4. Запрашиваем кэфы
         sem = asyncio.Semaphore(20)
-        tasks = [fetch_event_details(ev["id"], sem) for ev in valid_events]
+        tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
         results = await asyncio.gather(*tasks)
         
         matches = {}
         for ev, res in zip(valid_events, results):
             if res:
+                odds, score, status = res
                 matches[f"fon_{ev['id']}"] = {
                     "title": f"{ev['team1']} - {ev['team2']}",
                     "home": ev['team1'], "away": ev['team2'],
                     "homeLogo": f"https://static.fon.bet/team_logos/{ev.get('team1Id')}.png",
                     "awayLogo": f"https://static.fon.bet/team_logos/{ev.get('team2Id')}.png",
-                    "league": res['league'], 
-                    "status": res['status'], "score": res['score'],
-                    "start_time": ev.get("startTime"), "odds": res['odds']
+                    "league": ev['league_name'], 
+                    "status": status, "score": score,
+                    "start_time": ev.get("startTime"), "odds": odds
                 }
         
         if matches:
