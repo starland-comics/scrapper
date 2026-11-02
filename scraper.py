@@ -1,25 +1,21 @@
 import requests
 import json
 
-# Открытый эндпоинт 1xBet (может потребоваться актуальное зеркало)
-url = "https://1xbet.com/LineFeed/GetSportsShortZip?lng=ru&tz=3&country=1&partner=51&gr=70"
-
+url = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events"
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json"
 }
 
 try:
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=10)
+    print(f"Статус: {response.status_code}")
+    
     if response.status_code == 200:
         data = response.json()
-        # Ищем команды и их логотипы
-        # Структура может меняться, но обычно команды лежат в объектах с ключами "O1", "O2" или "T1", "T2"
-        # Ищем поля со словом "logo" или "image"
-        
-        # Просто выведем первые 500 символов, чтобы понять структуру
-        print(json.dumps(data, ensure_ascii=False, indent=2)[:1500])
+        # Выведем часть ответа, чтобы понять структуру
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:2000])
     else:
-        print(f"Ошибка: {response.status_code}")
+        print("Не удалось. Ответ:", response.text[:300])
 except Exception as e:
-    print(f"Ошибка запроса: {e}")
+    print(f"Ошибка: {e}")
