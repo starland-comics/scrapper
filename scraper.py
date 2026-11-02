@@ -12,6 +12,14 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
+# ТВОЙ БЕЛЫЙ СПИСОК ЛИГ
+TARGET_LEAGUES = [
+    "премьер-лига", "апл", "ла лига", "серия а", "бундеслига", "лига 1",
+    "лига чемпионов", "лига европы", "лига конференций", "рпл", "фнл", 
+    "млс", "mls", "саудовская", "чемпионшип", "эредивизи", "примейра", 
+    "сегунда", "чемпионат мира", "чемпионат европы", "лига наций"
+]
+
 def get_fonbet_data_sync(url):
     try:
         r = cffi_requests.get(url, headers=FONBET_HEADERS, impersonate="chrome120", timeout=10)
@@ -51,10 +59,7 @@ async def fetch_odds_and_score(event_id, sem):
         return odds, score_str, status_str
 
 def extract_leagues(data):
-    """Умный парсер лиг (поддерживает и списки, и словари)."""
     leagues = {}
-    
-    # 1. Пытаемся достать из tournamentInfos
     infos = data.get("tournamentInfos", [])
     if isinstance(infos, dict): infos = infos.values()
     for t in infos:
@@ -63,14 +68,12 @@ def extract_leagues(data):
             t_name = t.get("name") or t.get("rusName")
             if t_id and t_name:
                 leagues[t_id] = t_name
-
-    # 2. Пытаемся достать из sports -> regions -> competitions
+                
     sports = data.get("sports", [])
     if isinstance(sports, dict): sports = sports.values()
     for s in sports:
         if not isinstance(s, dict): continue
-        # kind=1 это футбол
-        if s.get("kind") == 1 or s.get("name") == "Футбол":
+        if s.get("kind") == 1:
             regions = s.get("regions", [])
             if isinstance(regions, dict): regions = regions.values()
             for r in regions:
@@ -85,6 +88,14 @@ def extract_leagues(data):
                         leagues[c_id] = c_name
     return leagues
 
+def is_target_league(league_name):
+    if not league_name: return False
+    l_name = league_name.lower()
+    for target in TARGET_LEAGUES:
+        if target in l_name:
+            return True
+    return False
+
 async def main():
     print("🔄 [Scraper] Запуск...")
     
@@ -93,24 +104,24 @@ async def main():
     
     if data and "events" in data:
         events = data.get("events", [])
-        print(f"🔍 Всего событий: {len(events)}")
-        
-        # Загружаем лиги динамически
         leagues_map = extract_leagues(data)
         print(f"✅ Загружено названий лиг: {len(leagues_map)}")
 
         now = time.time()
         valid_events = []
+        
         for ev in events:
-            # kind == 1 — это футбол (жесткий фильтр, отсекает регби и т.д.)
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 if ev.get("startTime", 0) > now - 10800:
-                    valid_events.append(ev)
+                    league_id = int(ev.get("sportId", 0))
+                    league_name = leagues_map.get(league_id, "Неизвестная лига")
+                    
+                    # ЖЕСТКИЙ ФИЛЬТР ПО БЕЛОМУ СПИСКУ
+                    if is_target_league(league_name):
+                        ev['league_name'] = league_name
+                        valid_events.append(ev)
         
-        print(f"⚽ Футбольных матчей: {len(valid_events)}")
-        
-        if not valid_events:
-            print("⚠️ Футбольные матчи не найдены. Проверь фильтр kind.")
+        print(f"⚽ Матчей из белого списка: {len(valid_events)}")
         
         sem = asyncio.Semaphore(20)
         tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
@@ -120,16 +131,14 @@ async def main():
         for ev, res in zip(valid_events, results):
             if res:
                 odds, score, status = res
-                league_id = int(ev.get("sportId", 0))
-                # Если лигу не нашли — пишем "Футбол", но матч оставляем!
-                league_name = leagues_map.get(league_id, "Футбол")
                 
                 matches[f"fon_{ev['id']}"] = {
                     "title": f"{ev['team1']} - {ev['team2']}",
                     "home": ev['team1'], "away": ev['team2'],
                     "homeLogo": f"https://static.fon.bet/team_logos/{ev.get('team1Id')}.png",
                     "awayLogo": f"https://static.fon.bet/team_logos/{ev.get('team2Id')}.png",
-                    "league": league_name, "status": status, "score": score,
+                    "league": ev['league_name'], 
+                    "status": status, "score": score,
                     "start_time": ev.get("startTime"), "odds": odds
                 }
         
