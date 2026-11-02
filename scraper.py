@@ -12,28 +12,27 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-# ХАРДКОД ID ТОЛЬКО НУЖНЫХ ФУТБОЛЬНЫХ ЛИГ (найдено в базе Фонбета)
-TARGET_LEAGUES = {
-    47: "АПЛ",
-    54: "Серия А",
-    53: "Бундеслига",
-    55: "Лига 1",
-    87: "Ла Лига",
-    11935: "РПЛ",
-    96: "ФНЛ",
-    130: "MLS",
-    11919: "Саудовская Аравия",
-    88: "Чемпионшип",
-    57: "Эредивизи",
-    61: "Примейра",
-    92: "Ла Лига 2",
-    42: "Лига Чемпионов",
-    73: "Лига Европы",
-    1509: "Лига Конференций",
-    110: "ЧМ",
-    111: "ЧЕ",
-    112: "Лига Наций"
-}
+WHITELIST = [
+    ("англия", "премьер-лига", "АПЛ"),
+    ("россия", "премьер-лига", "РПЛ"),
+    ("россия", "фнл", "ФНЛ"),
+    ("испания", "ла лига", "Ла Лига"),
+    ("испания", "сегунда", "Ла Лига 2"),
+    ("италия", "серия а", "Серия А"),
+    ("германия", "бундеслига", "Бундеслига"),
+    ("франция", "лига 1", "Лига 1"),
+    ("англия", "чемпионшип", "Чемпионшип"),
+    ("саудовская", "", "Саудовская Аравия"),
+    ("нидерланды", "эредивизи", "Эредивизи"),
+    ("португалия", "примейра", "Примейра"),
+    ("сша", "mls", "MLS"),
+    ("лига чемпионов", "", "Лига Чемпионов"),
+    ("лига европы", "", "Лига Европы"),
+    ("лига конференций", "", "Лига Конференций"),
+    ("чемпионат мира", "", "ЧМ"),
+    ("чемпионат европы", "", "ЧЕ"),
+    ("лига наций", "", "Лига Наций")
+]
 
 def get_fonbet_data_sync(url):
     try:
@@ -41,14 +40,31 @@ def get_fonbet_data_sync(url):
         if r.status_code == 200:
             return r.json()
     except Exception as e:
-        print(f"⚠️ Ошибка запроса: {e}")
+        pass
     return None
 
-async def fetch_odds_and_score(event_id, sem):
+def get_clean_league_name(raw_name):
+    name = raw_name.lower()
+    if any(x in name for x in ["женщины", "u21", "u19", "юнош", "молодеж", "бундеслига 3", "бундеслига-3", "серия b", "серия c"]):
+        return None
+    for keys, _, clean_name in WHITELIST:
+        if keys in name:
+            return clean_name
+    return None
+
+async def fetch_event_details(event_id, sem):
     async with sem:
         url = f"{BASE_URL}/events/event?eventId={event_id}&scopeMarket=1600&lang=ru"
         data = await asyncio.to_thread(get_fonbet_data_sync, url)
         if not data: return None
+        
+        event_info = data.get("event", {})
+        # Фонбет хранит название лиги в поле "competition" (или "sport")
+        raw_league = event_info.get("competition", "")
+        if not raw_league: raw_league = event_info.get("sport", "")
+        
+        clean_name = get_clean_league_name(raw_league)
+        if not clean_name: return None
         
         odds = {"1": None, "X": None, "2": None}
         for cf in data.get("customFactors", []):
@@ -62,7 +78,6 @@ async def fetch_odds_and_score(event_id, sem):
         
         if not odds["1"]: return None
         
-        event_info = data.get("event", {})
         score1 = event_info.get("score1")
         score2 = event_info.get("score2")
         minute = event_info.get("time", "")
@@ -71,11 +86,15 @@ async def fetch_odds_and_score(event_id, sem):
         score_str = f"{score1} : {score2}" if score1 is not None and place == "live" else "VS"
         status_str = f"LIVE {minute}'" if place == "live" else "Скоро"
         
-        return odds, score_str, status_str
+        return {
+            "league": clean_name,
+            "odds": odds,
+            "score": score_str,
+            "status": status_str
+        }
 
 async def main():
     print("🔄 [Scraper] Запуск...")
-    
     list_url = f"{BASE_URL}/events/list?scopeMarket=1600&lang=ru"
     data = await asyncio.to_thread(get_fonbet_data_sync, list_url)
     
@@ -86,35 +105,30 @@ async def main():
         now = time.time()
         valid_events = []
         
+        # Берем только футбол (kind=1) на ближайшие 2 дня, чтобы не делать 7000 запросов
         for ev in events:
-            # Фильтр: футбол (kind=1) и есть команды
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
-                if ev.get("startTime", 0) > now - 10800:
-                    sport_id = ev.get("sportId")
-                    
-                    # Берем ТОЛЬКО те лиги, которые есть в нашем словаре
-                    if sport_id in TARGET_LEAGUES:
-                        ev['league_name'] = TARGET_LEAGUES[sport_id]
-                        valid_events.append(ev)
+                start = ev.get("startTime", 0)
+                if start > now - 10800 and start < now + 172800: 
+                    valid_events.append(ev)
         
-        print(f"⚽ Матчей после фильтрации: {len(valid_events)}")
+        print(f"⚽ Футбольных матчей (2 дня): {len(valid_events)}")
         
         sem = asyncio.Semaphore(20)
-        tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
+        tasks = [fetch_event_details(ev["id"], sem) for ev in valid_events]
         results = await asyncio.gather(*tasks)
         
         matches = {}
         for ev, res in zip(valid_events, results):
             if res:
-                odds, score, status = res
                 matches[f"fon_{ev['id']}"] = {
                     "title": f"{ev['team1']} - {ev['team2']}",
                     "home": ev['team1'], "away": ev['team2'],
                     "homeLogo": f"https://static.fon.bet/team_logos/{ev.get('team1Id')}.png",
                     "awayLogo": f"https://static.fon.bet/team_logos/{ev.get('team2Id')}.png",
-                    "league": ev['league_name'], 
-                    "status": status, "score": score,
-                    "start_time": ev.get("startTime"), "odds": odds
+                    "league": res['league'], 
+                    "status": res['status'], "score": res['score'],
+                    "start_time": ev.get("startTime"), "odds": res['odds']
                 }
         
         if matches:
