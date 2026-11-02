@@ -39,7 +39,7 @@ COUNTRY_NAMES = {
     "iraq", "uzbekistan", "kazakhstan", "ukraine", "poland", "czech",
     "slovakia", "hungary", "romania", "bulgaria", "denmark", "norway",
     "sweden", "finland", "iceland", "ireland", "scotland", "wales",
-    "russia", "россия", "германия", "франция", "италия", "испания",
+    "россия", "германия", "франция", "италия", "испания",
     "англия", "португалия", "бразилия", "аргентина", "тунис", "таиланд",
     "швейцария", "австрия", "бельгия", "нидерланды", "хорватия", "сербия",
     "греция", "турция", "япония", "корея", "китай", "индия", "австралия",
@@ -48,6 +48,18 @@ COUNTRY_NAMES = {
     "польша", "чехия", "словакия", "венгрия", "румыния", "болгария",
     "дания", "норвегия", "швеция", "финляндия", "исландия", "ирландия",
     "шотландия", "уэльс",
+}
+
+# Прямые ID FotMob — обходят любую логику поиска и пишутся в кэш сразу
+FOTMOB_ID_OVERRIDES = {
+    "Порт": 165255,
+    "Порт ФК": 165255,
+    "Порту": 9772,
+    "Тун": 10191,
+    "Акрон": 1068364,
+    "Акрон Тольятти": 1068364,
+    "Родина": 1066681,
+    "Родина Москва": 1066681,
 }
 
 TEAM_OVERRIDES = {
@@ -178,7 +190,6 @@ def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
 # ---------- ВЫБОР КАНДИДАТА ----------
 def pick_best_candidate(cands, target_name, country_hint):
     if not cands: return None
-    # 1) Жёстко выкидываем сборные
     cands = [c for c in cands if not is_national_team(c.get("name", ""), c.get("league", ""))]
     if not cands: return None
 
@@ -188,7 +199,6 @@ def pick_best_candidate(cands, target_name, country_hint):
     def base_score(c):
         return fuzz.token_set_ratio(target, _normalize(c.get("name", ""))) * 10 + min(c.get("score", 0), 200)
 
-    # 2) Если знаем страну лиги — сначала ищем среди кандидатов из этой страны
     if country_hint:
         matching = [c for c in cands
                     if country_hint in (c.get("league") or "").lower()
@@ -196,7 +206,6 @@ def pick_best_candidate(cands, target_name, country_hint):
         if matching:
             return max(matching, key=base_score)
 
-    # 3) Иначе — лучший по имени среди всех оставшихся
     return max(cands, key=base_score)
 
 # ---------- ПОИСК ЛОГОТИПОВ ----------
@@ -239,7 +248,8 @@ async def search_thesportsdb(name_en: str) -> list[dict]:
                 if r.status_code != 200: continue
                 for t in (r.json() or {}).get("teams") or []:
                     if not t.get("strBadge"): continue
-                    if (t.get("strSport") or "").lower() != "soccer": continue
+                    sport = (t.get("strSport") or "").lower()
+                    if sport and sport != "soccer": continue
                     team_name = t.get("strTeam", "")
                     if "national" in team_name.lower(): continue
                     out.append({"name": team_name,
@@ -278,17 +288,26 @@ async def search_apifootball(name_en: str) -> list[dict]:
         print(f"   ⚠️ API-Football exception: {e}")
         return []
 
-async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: dict) -> str:
+async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: dict, force_refresh: bool = False) -> str:
     country = league_to_country(comp_name) or ""
     key = f"{team_ru}|{country}"
 
-    for existing_key in (key, team_ru):
-        existing = cache.get(existing_key)
-        if existing and not _is_fallback(existing):
-            LOGO_STATS["cache"] += 1
-            if existing_key == team_ru and existing_key != key:
-                cache[key] = existing
-            return existing
+    if not force_refresh:
+        for existing_key in (key, team_ru):
+            existing = cache.get(existing_key)
+            if existing and not _is_fallback(existing):
+                LOGO_STATS["cache"] += 1
+                if existing_key == team_ru and existing_key != key:
+                    cache[key] = existing
+                return existing
+
+    # Прямой ID FotMob — приоритет над всем
+    fid = FOTMOB_ID_OVERRIDES.get(team_ru)
+    if fid:
+        logo = f"https://images.fotmob.com/image_resources/logo/teamlogo/{fid}.png"
+        cache[key] = logo
+        LOGO_STATS["fotmob"] += 1
+        return logo
 
     name_en = name_en_map.get(team_ru) or TEAM_OVERRIDES.get(team_ru) or team_ru
 
@@ -311,18 +330,19 @@ async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: d
     cache[key] = fb; LOGO_STATS["fallback"] += 1
     return fb
 
-async def search_all_logos(teams_with_league: list[tuple[str, str]], cache: dict, name_en_map: dict):
+async def search_all_logos(teams_with_league: list, cache: dict, name_en_map: dict):
+    """teams_with_league: список кортежей (team, league, force_refresh)"""
     sem = asyncio.Semaphore(20)
-    async def one(team, league):
+    async def one(team, league, force):
         async with sem:
             try:
-                await resolve_logo(team, league, cache, name_en_map)
+                await resolve_logo(team, league, cache, name_en_map, force_refresh=force)
             except Exception as e:
                 print(f"   ⚠️ {team}: {e}")
                 hint = league_to_country(league) or ""
                 cache[f"{team}|{hint}"] = make_fallback_logo(team)
                 LOGO_STATS["fallback"] += 1
-    await asyncio.gather(*(one(t, l) for t, l in teams_with_league))
+    await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
 # ---------- OLIMPBET ----------
 def fetch_olimp_matches(url):
@@ -339,7 +359,7 @@ def fetch_olimp_matches(url):
             time.sleep(1)
     return []
 
-def extract_live_score_and_time(ev: dict) -> tuple[str | None, str | None]:
+def extract_live_score_and_time(ev: dict):
     score = None; minute = None
 
     sc = ev.get("score")
@@ -428,18 +448,20 @@ async def main():
         if sample:
             print(f"   DEBUG LIVE full: {json.dumps(sample[0], ensure_ascii=False)[:3000]}")
 
+    # Собираем пары для поиска: (team, league, force_refresh)
     missing = set()
     for ev, _, league_name in all_matches:
         for t in (ev.get("team1Name"), ev.get("team2Name")):
             if not t: continue
             hint = league_to_country(league_name) or ""
             existing = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            if not existing or _is_fallback(existing):
-                missing.add((t, league_name))
+            force = (t in FOTMOB_ID_OVERRIDES) or (not existing) or _is_fallback(existing)
+            if force:
+                missing.add((t, league_name, force))
 
     if missing:
         print(f"🔎 Поиск логотипов для {len(missing)} пар (team, league)...")
-        all_teams = [t for t, _ in missing]
+        all_teams = list({t for t, _, _ in missing})
         name_en_map = batch_translate_ru_to_en(all_teams)
         for team, en in TEAM_OVERRIDES.items():
             name_en_map[team] = en
