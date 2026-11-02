@@ -12,7 +12,28 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-BLACKLIST = ["женщины", "u21", "u19", "u20", "молодеж", "юнош", "резерв", "любител", "истмиан", "северная", "южная", "восточная", "западная", "регион"]
+# Строгий белый список ключевых слов для футбольных лиг
+WHITELIST = [
+    ("англия", "премьер-лига", "апл"),
+    ("россия", "премьер-лига", "рпл"),
+    ("россия", "фнл", "фнл"),
+    ("испания", "ла лига", "ла лига"),
+    ("испания", "сегунда", "ла лига 2"),
+    ("италия", "серия а", "серия а"),
+    ("германия", "бундеслига", "бундеслига"),
+    ("франция", "лига 1", "лига 1"),
+    ("англия", "чемпионшип", "чемпионшип"),
+    ("саудовская", "", "саудовская аравия"),
+    ("нидерланды", "эредивизи", "эредивизи"),
+    ("португалия", "примейра", "примейра"),
+    ("сша", "mls", "mls"),
+    ("лига чемпионов", "", "лига чемпионов"),
+    ("лига европы", "", "лига европы"),
+    ("лига конференций", "", "лига конференций"),
+    ("чемпионат мира", "", "чм"),
+    ("чемпионат европы", "", "че"),
+    ("лига наций", "", "лига наций")
+]
 
 def get_fonbet_data_sync(url):
     try:
@@ -52,53 +73,44 @@ async def fetch_odds_and_score(event_id, sem):
         
         return odds, score_str, status_str
 
-def extract_leagues_recursive(data, leagues=None):
-    """Рекурсивно ищет все пары ID-Название в любом месте JSON."""
-    if leagues is None:
-        leagues = {}
+def get_football_leagues(data):
+    """Берем лиги СТРОГО из футбольного раздела (kind=1)"""
+    leagues = {}
+    sports = data.get("sports", [])
+    if isinstance(sports, dict): sports = sports.values()
     
-    if isinstance(data, dict):
-        cid = data.get("id") or data.get("sportId") or data.get("tournamentId")
-        cname = data.get("name") or data.get("rusName") or data.get("competitionName")
-        
-        if cid and isinstance(cname, str) and len(cname) > 2:
-            leagues[int(cid)] = cname
-            
-        for v in data.values():
-            extract_leagues_recursive(v, leagues)
-            
-    elif isinstance(data, list):
-        for item in data:
-            extract_leagues_recursive(item, leagues)
-            
+    for s in sports:
+        if not isinstance(s, dict): continue
+        # Футбол в Фонбете - это kind = 1
+        if s.get("kind") == 1 or s.get("name") == "Футбол":
+            regions = s.get("regions", [])
+            if isinstance(regions, dict): regions = regions.values()
+            for r in regions:
+                if not isinstance(r, dict): continue
+                comps = r.get("competitions", [])
+                if isinstance(comps, dict): comps = comps.values()
+                for c in comps:
+                    if not isinstance(c, dict): continue
+                    cid = c.get("id")
+                    cname = c.get("name") or c.get("rusName")
+                    if cid and cname:
+                        leagues[cid] = cname
     return leagues
 
-def normalize_league_name(raw_name):
+def get_clean_league_name(raw_name):
     name = raw_name.lower()
     
-    if "россия" in name and "премьер-лига" in name: return "РПЛ"
-    if "россия" in name and "фнл" in name: return "ФНЛ"
-    if "англия" in name and "премьер-лига" in name and "северная" not in name: return "АПЛ"
-    if "испания" in name and "ла лига" in name and "сегунда" not in name: return "Ла Лига"
-    if "испания" in name and "сегунда" in name: return "Ла Лига 2"
-    if "италия" in name and "серия а" in name and "баскет" not in name: return "Серия А"
-    if "германия" in name and "бундеслига" in name and "2" not in name: return "Бундеслига"
-    if "франция" in name and "лига 1" in name: return "Лига 1"
-    if "англия" in name and "чемпионшип" in name: return "Чемпионшип"
-    if "саудовская" in name: return "Саудовская Аравия"
-    if "нидерланды" in name and "эредивизи" in name: return "Эредивизи"
-    if "португалия" in name and "примейра" in name: return "Примейра"
-    if "сша" in name and ("mls" in name or "млс" in name): return "MLS"
-    
-    if "лига чемпионов" in name: return "Лига Чемпионов"
-    if "лига европы" in name: return "Лига Европы"
-    if "лига конференций" in name: return "Лига Конференций"
-    
-    if "чемпионат мира" in name: return "ЧМ"
-    if "чемпионат европы" in name: return "ЧЕ"
-    if "лига наций" in name: return "Лига Наций"
-    
-    return raw_name
+    # Жесткая отсечка мусора внутри лиг
+    if "женщины" in name or "u21" in name or "u19" in name or "юнош" in name or "молодеж" in name:
+        return None
+    if "бундеслига 3" in name or "бундеслига-3" in name or "бундеслига 2" in name or "серия b" in name or "серия c" in name:
+        return None
+
+    for keys, _, clean_name in WHITELIST:
+        if keys in name:
+            return clean_name.upper()
+            
+    return None
 
 async def main():
     print("🔄 [Scraper] Запуск...")
@@ -108,21 +120,13 @@ async def main():
     
     if data and "events" in data:
         events = data.get("events", [])
-        
-        # Используем рекурсивный парсер
-        leagues_map = extract_leagues_recursive(data)
-        print(f"✅ Загружено названий лиг: {len(leagues_map)}")
-        
-        # Отладка: выведем 3 лиги, чтобы понять, что мы спарсили
-        print("📋 Пример лиг:")
-        for k, v in list(leagues_map.items())[:3]:
-            print(f"   {k}: {v}")
+        leagues_map = get_football_leagues(data)
+        print(f"✅ Загружено футбольных лиг: {len(leagues_map)}")
 
         now = time.time()
         valid_events = []
         
         for ev in events:
-            # Фильтр: футбол (kind=1) и есть команды
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 if ev.get("startTime", 0) > now - 10800:
                     league_id = ev.get("sportId")
@@ -130,13 +134,10 @@ async def main():
                     
                     if not raw_league_name: continue
                     
-                    l_name = raw_league_name.lower()
-                    if any(bad_word in l_name for bad_word in BLACKLIST): continue
-
-                    clean_name = normalize_league_name(raw_league_name)
+                    clean_name = get_clean_league_name(raw_league_name)
                     
-                    # Берем только нужные лиги (которые нормализовались)
-                    if clean_name != raw_league_name:
+                    # Если лига прошла фильтр, добавляем
+                    if clean_name:
                         ev['league_name'] = clean_name
                         valid_events.append(ev)
         
