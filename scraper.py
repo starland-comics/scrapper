@@ -12,12 +12,34 @@ FONBET_HEADERS = {
     "Referer": "https://www.fon.bet/",
 }
 
-TARGET_LEAGUES = [
-    "премьер-лига", "апл", "ла лига", "серия а", "бундеслига", "лига 1",
-    "лига чемпионов", "лига европы", "лига конференций", "рпл", "фнл", 
-    "млс", "mls", "саудовская", "чемпионшип", "эредивизи", "примейра", 
-    "сегунда", "чемпионат мира", "чемпионат европы", "лига наций"
-]
+# Черный список (что не показываем)
+BLACKLIST = ["женщины", "u21", "u19", "u20", "молодеж", "баскетбол", "волейбол", "теннис", "кибер"]
+
+def normalize_league_name(raw_name):
+    """Превращает длинные названия Фонбета в короткие и понятные."""
+    name = raw_name.lower()
+    
+    if "англия" in name and "премьер-лига" in name: return "АПЛ"
+    if "испания" in name and "ла лига" in name: return "Ла Лига"
+    if "испания" in name and "сегунда" in name: return "Ла Лига 2"
+    if "италия" in name and "серия а" in name: return "Серия А"
+    if "германия" in name and "бундеслига" in name: return "Бундеслига"
+    if "франция" in name and "лига 1" in name: return "Лига 1"
+    if "россия" in name and "премьер-лига" in name: return "РПЛ"
+    if "россия" in name and "фнл" in name: return "ФНЛ"
+    if "саудовская" in name: return "Саудовская Аравия"
+    if "нидерланды" in name and "эредивизи" in name: return "Эредивизи"
+    if "португалия" in name and "примейра" in name: return "Примейра"
+    if "сша" in name and "mls" in name: return "MLS"
+    if "лига чемпионов" in name: return "Лига Чемпионов"
+    if "лига европы" in name: return "Лига Европы"
+    if "лига конференций" in name: return "Лига Конференций"
+    if "чемпионшип" in name: return "Чемпионшип"
+    if "чемпионат мира" in name: return "ЧМ"
+    if "чемпионат европы" in name: return "ЧЕ"
+    if "лига наций" in name: return "Лига Наций"
+    
+    return raw_name
 
 def get_fonbet_data_sync(url):
     try:
@@ -58,57 +80,23 @@ async def fetch_odds_and_score(event_id, sem):
         return odds, score_str, status_str
 
 def extract_leagues(data):
-    """Бронебойный парсер: ищет лиги во всех возможных местах JSON"""
     leagues = {}
-    
-    # 1. Прямой перебор всех списков в корне
     for key, val in data.items():
         if isinstance(val, list):
             for item in val:
                 if isinstance(item, dict):
-                    # ID может называться id или sportId
                     cid = item.get("id") or item.get("sportId")
                     cname = item.get("name") or item.get("rusName")
                     if cid and cname and isinstance(cname, str):
                         leagues[cid] = cname
-                        
-    # 2. Перебор словарей в корне
-    for key, val in data.items():
-        if isinstance(val, dict):
+        elif isinstance(val, dict):
             for item in val.values():
                 if isinstance(item, dict):
                     cid = item.get("id") or item.get("sportId")
                     cname = item.get("name") or item.get("rusName")
                     if cid and cname and isinstance(cname, str):
                         leagues[cid] = cname
-
-    # 3. Копаем глубоко в sports -> regions -> competitions
-    sports = data.get("sports", [])
-    if isinstance(sports, dict): sports = sports.values()
-    for s in sports:
-        if not isinstance(s, dict): continue
-        regions = s.get("regions", [])
-        if isinstance(regions, dict): regions = regions.values()
-        for r in regions:
-            if not isinstance(r, dict): continue
-            comps = r.get("competitions", [])
-            if isinstance(comps, dict): comps = comps.values()
-            for c in comps:
-                if not isinstance(c, dict): continue
-                c_id = c.get("id")
-                c_name = c.get("name") or c.get("rusName")
-                if c_id and c_name:
-                    leagues[c_id] = c_name
-                    
     return leagues
-
-def is_target_league(league_name):
-    if not league_name: return False
-    l_name = league_name.lower()
-    for target in TARGET_LEAGUES:
-        if target in l_name:
-            return True
-    return False
 
 async def main():
     print("🔄 [Scraper] Запуск...")
@@ -120,29 +108,34 @@ async def main():
         events = data.get("events", [])
         leagues_map = extract_leagues(data)
         print(f"✅ Загружено названий лиг: {len(leagues_map)}")
-        
-        # Отладка: выводим первые 5 найденных лиг, чтобы понять, что там
-        print("📋 Пример найденных лиг:")
-        for k, v in list(leagues_map.items())[:5]:
-            print(f"   {k}: {v}")
 
         now = time.time()
         valid_events = []
         
         for ev in events:
+            # Фильтр: только футбол (kind=1) и есть команды
             if ev.get("kind") == 1 and ev.get("team1") and ev.get("team2"):
                 if ev.get("startTime", 0) > now - 10800:
                     league_id = ev.get("sportId")
-                    league_name = leagues_map.get(league_id, "Неизвестно")
+                    raw_league_name = leagues_map.get(league_id, "")
                     
-                    if is_target_league(league_name):
-                        ev['league_name'] = league_name
+                    if not raw_league_name: continue
+                    
+                    # ЖЕСТКИЙ ЧЕРНЫЙ СПИСОК
+                    l_name = raw_league_name.lower()
+                    if any(bad_word in l_name for bad_word in BLACKLIST):
+                        continue
+
+                    # КРАСИВОЕ НАЗВАНИЕ
+                    clean_name = normalize_league_name(raw_league_name)
+                    
+                    # Берем только те, что есть в нашем нормализаторе (то есть целевые)
+                    # Либо можно добавить проверку на наличие в TARGET_LEAGUES
+                    if clean_name != raw_league_name or "премьер" in l_name or "рпл" in l_name:
+                        ev['league_name'] = clean_name
                         valid_events.append(ev)
         
-        print(f"⚽ Матчей из белого списка: {len(valid_events)}")
-        
-        if not valid_events and events:
-            print("⚠️ Не нашли матчей. Пример sportId в событиях:", set([e.get('sportId') for e in events[:10]]))
+        print(f"⚽ Матчей после фильтрации: {len(valid_events)}")
         
         sem = asyncio.Semaphore(20)
         tasks = [fetch_odds_and_score(ev["id"], sem) for ev in valid_events]
