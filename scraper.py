@@ -4,6 +4,7 @@ import httpx
 import json
 import urllib.parse
 import os
+import re
 import hashlib
 import base64
 from curl_cffi import requests as cffi_requests
@@ -312,6 +313,30 @@ def fetch_olimp_matches(url):
         except Exception: time.sleep(1)
     return []
 
+# ================= АГРЕССИВНЫЙ ПАРСЕР МИНУТЫ =================
+def _try_extract_minute(val):
+    if val is None or isinstance(val, bool): return None
+    if isinstance(val, (int, float)):
+        return int(val) if 0 <= val <= 130 else None
+    if isinstance(val, str):
+        s = val.strip(); sl = s.lower()
+        if any(x in sl for x in ["перерыв", "halftime", "half time", "ht"]): return "HT"
+        if any(x in sl for x in ["завершен", "finished", "ended", "full time", "ft"]): return "FT"
+        if any(x in sl for x in ["1st half", "1h", "первый тайм"]): return "1H"
+        if any(x in sl for x in ["2nd half", "2h", "второй тайм"]): return "2H"
+        m = re.search(r"(\d{1,3})", s)
+        if m:
+            n = int(m.group(1))
+            if 0 <= n <= 130: return n
+        return None
+    if isinstance(val, dict):
+        for sub in ["minute", "current", "elapsed", "value", "display", "text", "seconds", "currentMinute"]:
+            if sub in val:
+                r = _try_extract_minute(val[sub])
+                if r is not None: return r
+        return None
+    return None
+
 def extract_live_score_and_time(ev):
     score = None; minute = None
     sc = ev.get("score")
@@ -321,20 +346,59 @@ def extract_live_score_and_time(ev):
         if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
     elif isinstance(sc, str) and ":" in sc: score = sc
     if not score:
-        s1 = ev.get("score1") or ev.get("homeScore")
-        s2 = ev.get("score2") or ev.get("awayScore")
+        s1 = ev.get("score1") or ev.get("homeScore") or ev.get("team1Score")
+        s2 = ev.get("score2") or ev.get("awayScore") or ev.get("team2Score")
         if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
-    t = ev.get("time")
-    if isinstance(t, dict): minute = t.get("minute") or t.get("current") or t.get("elapsed")
-    elif isinstance(t, (int, str)): minute = t
-    if not minute: minute = ev.get("minute") or ev.get("currentMinute") or ev.get("liveTime")
-    return score, str(minute) if minute is not None else None
+
+    for field in ["minute", "currentMinute", "liveTime", "liveTimer", "elapsed",
+                  "time", "timer", "matchTime", "gameTime", "periodTime",
+                  "currentTime", "timeLive", "liveMinute", "scoreTime", "statusTime",
+                  "gameMinute", "elapsedTime", "timePlayed", "minutes", "minutePlayed"]:
+        if field in ev:
+            r = _try_extract_minute(ev[field])
+            if r is not None: minute = r; break
+
+    if minute is None:
+        for nk in ["score", "status", "live", "progress", "timer", "time"]:
+            nested = ev.get(nk)
+            if isinstance(nested, dict):
+                r = _try_extract_minute(nested)
+                if r is not None: minute = r; break
+
+    if minute is None:
+        for pf in ["period", "timeStatus", "status", "liveStatus", "matchStatus", "half", "timePeriod"]:
+            v = ev.get(pf)
+            if isinstance(v, str):
+                vl = v.lower()
+                if any(x in vl for x in ["ht", "halftime", "перерыв", "half"]): minute = "HT"; break
+                if any(x in vl for x in ["1h", "1st", "первый тайм"]): minute = "1H"; break
+                if any(x in vl for x in ["2h", "2nd", "второй тайм"]): minute = "2H"; break
+
+    return score, minute
+# ============================================================
+
+def build_status(status_type, minute):
+    if status_type != "LIVE": return status_type
+    if minute is None: return "LIVE"
+    if minute in ("HT", "FT", "1H", "2H"): return f"LIVE · {minute}"
+    return f"LIVE {minute}'"
+
+def find_logo(cache, team, hint):
+    if not team: return ""
+    v = cache.get(f"{team}|{hint}")
+    if v: return v
+    v = cache.get(team)
+    if v: return v
+    for k, val in cache.items():
+        if "|" in k and k.split("|")[0] == team and val:
+            return val
+    return ""
 
 async def fetch_finished_matches(old_matches, new_match_ids):
     print("📥 Ищу результаты завершенных матчей...")
     finished_known = await firebase_get("finished_matches") or {}
     if not isinstance(finished_known, dict): finished_known = {}
-    
+
     finished_dict = {}
     now = time.time()
     missing_ids = set()
@@ -342,11 +406,9 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         if not isinstance(match, dict): continue
         if mid in finished_known: continue
         st = match.get("start_time")
-        is_old = st and (now > st + 10800)  # 3 часа
+        is_old = st and (now > st + 10800)
         if (mid not in new_match_ids and is_old) or (mid in new_match_ids and is_old):
             missing_ids.add(mid)
-        elif mid not in new_match_ids and st and now > st:
-            pass
 
     if not missing_ids:
         print("✅ Нет новых завершенных матчей (>3ч).")
@@ -462,6 +524,49 @@ async def main():
     line_count = parse(line_data, "Скоро")
     print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
 
+    # 1) Собираем missing из свежей выдачи
+    missing = set()
+    for ev, _, league_name in all_matches:
+        for t in (ev.get("team1Name"), ev.get("team2Name")):
+            if not t: continue
+            hint = league_to_country(league_name) or ""
+            ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
+            force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
+            if force: missing.add((t, league_name, force))
+
+    # 2) ДОБАВЛЯЕМ команды "зависших" LIVE-матчей в поиск логотипов
+    stale_live_matches = []
+    for mid, old_m in old_matches_dict.items():
+        if not isinstance(old_m, dict): continue
+        if not old_m.get("status", "").startswith("LIVE"): continue
+        if mid in finished_known: continue
+        stale_live_matches.append((mid, old_m))
+        hint = league_to_country(old_m.get("league", "")) or ""
+        for t in (old_m.get("home"), old_m.get("away")):
+            if not t: continue
+            ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
+            if not ex or _is_fallback(ex):
+                missing.add((t, old_m.get("league", ""), True))
+
+    if stale_live_matches:
+        print(f"🔁 Найдено {len(stale_live_matches)} 'зависших' LIVE-матчей — обновляю логотипы")
+
+    # 3) Поиск логотипов
+    if missing:
+        print(f"🔎 Поиск логотипов для {len(missing)} пар...")
+        teams_to_search = list({t for t, _, _ in missing})
+        name_en_map = batch_translate_ru_to_en(teams_to_search)
+        t0 = time.time()
+        await search_all_logos(list(missing), logo_cache, name_en_map)
+        print(f"✅ Обработано за {time.time()-t0:.1f}s")
+        print(f"📊 fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
+
+    ok = await firebase_put("team_logos", _cache_to_fb(logo_cache))
+    print(f"💾 Кэш логотипов: {len(logo_cache)} записей, ok={ok}")
+    if FALLBACK_TEAMS:
+        print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
+
+    # 4) Собираем свежие матчи
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
         ev_id = ev.get("id")
@@ -470,8 +575,8 @@ async def main():
 
         t1 = ev.get("team1Name"); t2 = ev.get("team2Name")
         hint = league_to_country(league_name) or ""
-        hl = logo_cache.get(f"{t1}|{hint}") or logo_cache.get(t1, "")
-        al = logo_cache.get(f"{t2}|{hint}") or logo_cache.get(t2, "")
+        hl = find_logo(logo_cache, t1, hint)
+        al = find_logo(logo_cache, t2, hint)
 
         p1 = px = p2 = None
         for out in ev.get("outcomes", []):
@@ -485,9 +590,8 @@ async def main():
         if status_type == "LIVE":
             sc, mn = extract_live_score_and_time(ev)
             if sc: score = sc
-            if mn: status_str = f"LIVE {mn}'"
-            else: status_str = "LIVE"
-        
+            status_str = build_status("LIVE", mn)
+
         time_display = status_str
         if status_type == "Скоро":
             st = ev.get("startDateTime")
@@ -501,28 +605,38 @@ async def main():
             "odds": {"1": p1, "X": px, "2": p2}
         }
 
+    # 5) Preservation: переносим "зависшие" LIVE-матчи, но с ОБНОВЛЁННЫМИ логотипами
     preserved = 0
-    for mid, old_m in old_matches_dict.items():
-        if not isinstance(old_m, dict): continue
-        if old_m.get("status", "").startswith("LIVE") and mid in matches_dict:
-            if old_m.get("score") != "VS" and old_m.get("status") != "LIVE":
+    for mid, old_m in stale_live_matches:
+        # Обновляем лого из свежего кэша
+        old_hint = league_to_country(old_m.get("league", "")) or ""
+        new_h = find_logo(logo_cache, old_m.get("home", ""), old_hint)
+        new_a = find_logo(logo_cache, old_m.get("away", ""), old_hint)
+
+        if mid not in matches_dict:
+            st = old_m.get("start_time")
+            if st and now_ts > st and now_ts < st + 10800:
+                if new_h: old_m["homeLogo"] = new_h
+                if new_a: old_m["awayLogo"] = new_a
                 matches_dict[mid] = old_m
                 preserved += 1
-    if preserved:
-        print(f"🛡 Сохранено LIVE от перезаписи: {preserved}")
+                print(f"♻️ Сохранён LIVE (не в выдаче): {old_m.get('title')} | logo={'✅' if new_h else '❌'}")
+            continue
 
-    # Помечаем зависшие матчи как LIVE
-    for mid, old_m in old_matches_dict.items():
-        if not isinstance(old_m, dict): continue
-        if mid in matches_dict: continue
-        if mid in finished_known: continue
-        st = old_m.get("start_time")
-        if st and now_ts > st and now_ts < st + 10800:
-            if not old_m.get("status", "").startswith("LIVE"):
-                old_m["status"] = "LIVE"
-            matches_dict[mid] = old_m
-            preserved += 1
-            print(f"♻️ Матч помечен LIVE (ожидает лайв-данных): {old_m.get('title')}")
+        # Матч есть в выдаче — сохраняем счёт/минуту из базы, но берём свежие лого
+        new_m = matches_dict[mid]
+        if old_m.get("score") and old_m.get("score") != "VS":
+            new_m["score"] = old_m["score"]
+        if old_m.get("status") and old_m.get("status") != "LIVE":
+            new_m["status"] = old_m["status"]
+        if not new_m.get("homeLogo") and old_m.get("homeLogo"):
+            new_m["homeLogo"] = old_m["homeLogo"]
+        if not new_m.get("awayLogo") and old_m.get("awayLogo"):
+            new_m["awayLogo"] = old_m["awayLogo"]
+        preserved += 1
+
+    if preserved:
+        print(f"🛡 Сохранено LIVE-матчей: {preserved}")
 
     if matches_dict:
         await firebase_put("matches", matches_dict)
