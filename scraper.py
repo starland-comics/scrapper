@@ -342,12 +342,16 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         if not isinstance(match, dict): continue
         if mid in finished_known: continue
         st = match.get("start_time")
-        is_old = st and (now > st + 9000)
-        if mid not in new_match_ids or is_old:
+        # Если прошло больше 3 часов (10800 сек) и матча нет в новой линии — он завершен
+        is_old = st and (now > st + 10800)
+        if (mid not in new_match_ids and is_old) or (mid in new_match_ids and is_old):
             missing_ids.add(mid)
+        elif mid not in new_match_ids and st and now > st:
+            # Матч пропал из линии, но прошел меньше 3 часов — он может быть в лайве, не удаляем и не завершаем
+            pass
 
     if not missing_ids:
-        print("✅ Нет новых завершенных матчей.")
+        print("✅ Нет новых завершенных матчей (>3ч).")
         return
 
     dates = {
@@ -385,7 +389,7 @@ async def fetch_finished_matches(old_matches, new_match_ids):
                 print(f"   💀 Void (>5ч без результата): {match.get('title')}")
                 finished_dict[mid] = {"void": True}
             else:
-                print(f"   ⏳ Ждём результат: {match.get('title')} (стартовал {int((now - st)/60) if st else '?'} мин назад)")
+                print(f"   ⏳ Ждём результат: {match.get('title')}")
 
     if finished_dict:
         print(f"✅ Обработано {len(finished_dict)} матчей.")
@@ -420,21 +424,12 @@ async def main():
 
     print("📥 Загружаю LIVE...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
-    if not live_data:
-        print("   ⚠️ LIVE пустой ответ.")
-    else:
-        sports = []
-        for item in live_data:
-            sp = item.get("payload", {}).get("sport", {})
-            comps = item.get("payload", {}).get("competitionsWithEvents", [])
-            cnt = sum(len(c.get("events", [])) for c in comps)
-            sports.append(f"ID={sp.get('id')} ({sp.get('name')}) - {cnt}")
-        print(f"   🔍 LIVE API: {', '.join(sports)}")
-
     print("📥 Загружаю ЛИНИЮ...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
 
     all_matches = []
+    now_ts = time.time()
+
     def parse(data, status_type):
         count = 0
         for sg in data:
@@ -446,36 +441,18 @@ async def main():
                 for ev in comp.get("events", []):
                     t1 = ev.get("team1Name", ""); t2 = ev.get("team2Name", "")
                     if t1 and t2 and is_valid_match(t1, t2, comp_name):
-                        all_matches.append((ev, status_type, comp_name))
+                        # Если это линия, но матч уже начался — принудительно делаем LIVE
+                        st = ev.get("startDateTime")
+                        actual_status = status_type
+                        if status_type == "Скоро" and st and st < now_ts:
+                            actual_status = "LIVE"
+                        all_matches.append((ev, actual_status, comp_name))
                         count += 1
         return count
 
     live_count = parse(live_data, "LIVE")
     line_count = parse(line_data, "Скоро")
     print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
-
-    missing = set()
-    for ev, _, league_name in all_matches:
-        for t in (ev.get("team1Name"), ev.get("team2Name")):
-            if not t: continue
-            hint = league_to_country(league_name) or ""
-            ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
-            if force: missing.add((t, league_name, force))
-
-    if missing:
-        print(f"🔎 Поиск логотипов для {len(missing)} пар...")
-        teams = list({t for t, _, _ in missing})
-        name_en_map = batch_translate_ru_to_en(teams)
-        t0 = time.time()
-        await search_all_logos(list(missing), logo_cache, name_en_map)
-        print(f"✅ Обработано за {time.time()-t0:.1f}s")
-        print(f"📊 fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
-
-    ok = await firebase_put("team_logos", _cache_to_fb(logo_cache))
-    print(f"💾 Кэш логотипов: {len(logo_cache)} записей, ok={ok}")
-    if FALLBACK_TEAMS:
-        print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
@@ -501,6 +478,8 @@ async def main():
             sc, mn = extract_live_score_and_time(ev)
             if sc: score = sc
             if mn: status_str = f"LIVE {mn}'"
+            else: status_str = "LIVE"
+        
         time_display = status_str
         if status_type == "Скоро":
             st = ev.get("startDateTime")
@@ -514,14 +493,28 @@ async def main():
             "odds": {"1": p1, "X": px, "2": p2}
         }
 
+    # Защита от затирания лайва: если матч уже был LIVE, сохраняем его
     preserved = 0
     for mid, old_m in old_matches_dict.items():
         if not isinstance(old_m, dict): continue
         if old_m.get("status", "").startswith("LIVE") and mid in matches_dict:
-            matches_dict[mid] = old_m
-            preserved += 1
+            # Но только если старый статус более информативен (есть минута и счет)
+            if old_m.get("score") != "VS" and old_m.get("status") != "LIVE":
+                matches_dict[mid] = old_m
+                preserved += 1
     if preserved:
         print(f"🛡 Сохранено LIVE от перезаписи: {preserved}")
+
+    # Сохраняем старые матчи, которые начались, но еще не завершились (прошло < 3 часов) и пропали из линии
+    for mid, old_m in old_matches_dict.items():
+        if not isinstance(old_m, dict): continue
+        if mid in matches_dict: continue
+        if mid in finished_known: continue
+        st = old_m.get("start_time")
+        if st and now_ts > st and now_ts < st + 10800: # Прошло от 0 до 3 часов
+            matches_dict[mid] = old_m
+            preserved += 1
+            print(f"♻️ Оставлен в базе начавшийся матч: {old_m.get('title')}")
 
     if matches_dict:
         await firebase_put("matches", matches_dict)
