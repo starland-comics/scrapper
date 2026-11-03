@@ -80,6 +80,7 @@ DIRECT_LOGO_URLS = {
     "Рашден & Даймондс": "https://www.footylogos.com/dls/logo/rgba-v1/afc-rushden-diamonds.png",
     "Галифакс Таун": "https://www.footylogos.com/dls/logo/rgba-v1/fc-halifax-town.png",
     "Анайтасуна": "https://upload.wikimedia.org/wikipedia/en/thumb/8/8a/CD_Anaitasuna_logo.png/180px-CD_Anaitasuna_logo.png",
+    "Хромтау": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/FC_Khromtau_logo.png/180px-FC_Khromtau_logo.png",
 }
 
 TEAM_OVERRIDES = {
@@ -370,24 +371,19 @@ async def fetch_finished_matches(old_matches, new_match_ids):
     
     missing_ids = set(old_matches.keys()) - new_match_ids
     if not missing_ids:
-        print("✅ Нет пропавших матчей (все еще в линии).")
+        print("✅ Нет пропавших матчей.")
         return
 
     dates_to_fetch = set()
-    for mid in missing_ids:
-        match = old_matches[mid]
-        st = match.get("start_time")
-        if st:
-            dt = time.localtime(st)
-            dates_to_fetch.add(time.strftime("%Y-%m-%d", dt))
-        else:
-            dates_to_fetch.add(time.strftime("%Y-%m-%d"))
+    today = time.time()
+    dates_to_fetch.add(time.strftime("%Y-%m-%d", time.localtime(today)))
+    dates_to_fetch.add(time.strftime("%Y-%m-%d", time.localtime(today - 86400))) # Вчера
     
     tsdb_results = {}
     async with httpx.AsyncClient() as client:
         for d in dates_to_fetch:
             try:
-                r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=10)
+                r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=15)
                 if r.status_code == 200:
                     events = (r.json() or {}).get("events") or []
                     for ev in events:
