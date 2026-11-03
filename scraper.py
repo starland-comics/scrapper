@@ -10,7 +10,7 @@ from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
-OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events?vids%5B%5D=1"
+OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
@@ -91,7 +91,7 @@ TEAM_OVERRIDES = {
     "Аль-Кадисия Хубар": "Al-Qadsiah", "Аль-Шабаб Рияд": "Al-Shabab", "Аль-Наср Рияд": "Al-Nassr",
     "Аль-Хиляль Рияд": "Al-Hilal", "Аль-Ахли Джидда": "Al-Ahli", "Аль-Иттихад Джидда": "Al-Ittihad",
     "Аль-Иттифак": "Al-Ettifaq", "Аль-Таавун": "Al-Taawoun", "Аль-Фатех": "Al-Fateh",
-    "Аль-Фейха": "Al-Fayha", "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazem",
+    "Аль-Фейха": "Al-Fayha", "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazm",
     "Эстеглаль Тегеран": "Esteghlal", "Тэджон Ситизен": "Daejeon Citizen", "Чонбук": "Jeonbuk",
     "Штурм": "Sturm Graz", "Камбур": "Cambuur", "ВПР Астана": "Astana", "Хромтау": "Khromtau",
     "Кайсар": "Kaisar", "Нью-Йорк Ред Буллс": "New York Red Bulls", "Лос-Анджелес Гэлакси": "LA Galaxy",
@@ -342,12 +342,10 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         if not isinstance(match, dict): continue
         if mid in finished_known: continue
         st = match.get("start_time")
-        # Если прошло больше 3 часов (10800 сек) и матча нет в новой линии — он завершен
-        is_old = st and (now > st + 10800)
+        is_old = st and (now > st + 10800)  # 3 часа
         if (mid not in new_match_ids and is_old) or (mid in new_match_ids and is_old):
             missing_ids.add(mid)
         elif mid not in new_match_ids and st and now > st:
-            # Матч пропал из линии, но прошел меньше 3 часов — он может быть в лайве, не удаляем и не завершаем
             pass
 
     if not missing_ids:
@@ -424,6 +422,17 @@ async def main():
 
     print("📥 Загружаю LIVE...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
+    if live_data:
+        sports = []
+        for item in live_data:
+            sp = item.get("payload", {}).get("sport", {})
+            comps = item.get("payload", {}).get("competitionsWithEvents", [])
+            cnt = sum(len(c.get("events", [])) for c in comps)
+            sports.append(f"ID={sp.get('id')} ({sp.get('name')}) - {cnt}")
+        print(f"   🔍 LIVE API: {', '.join(sports)}")
+    else:
+        print("   ⚠️ LIVE пустой ответ.")
+
     print("📥 Загружаю ЛИНИЮ...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
 
@@ -441,7 +450,6 @@ async def main():
                 for ev in comp.get("events", []):
                     t1 = ev.get("team1Name", ""); t2 = ev.get("team2Name", "")
                     if t1 and t2 and is_valid_match(t1, t2, comp_name):
-                        # Если это линия, но матч уже начался — принудительно делаем LIVE
                         st = ev.get("startDateTime")
                         actual_status = status_type
                         if status_type == "Скоро" and st and st < now_ts:
@@ -493,28 +501,28 @@ async def main():
             "odds": {"1": p1, "X": px, "2": p2}
         }
 
-    # Защита от затирания лайва: если матч уже был LIVE, сохраняем его
     preserved = 0
     for mid, old_m in old_matches_dict.items():
         if not isinstance(old_m, dict): continue
         if old_m.get("status", "").startswith("LIVE") and mid in matches_dict:
-            # Но только если старый статус более информативен (есть минута и счет)
             if old_m.get("score") != "VS" and old_m.get("status") != "LIVE":
                 matches_dict[mid] = old_m
                 preserved += 1
     if preserved:
         print(f"🛡 Сохранено LIVE от перезаписи: {preserved}")
 
-    # Сохраняем старые матчи, которые начались, но еще не завершились (прошло < 3 часов) и пропали из линии
+    # Помечаем зависшие матчи как LIVE
     for mid, old_m in old_matches_dict.items():
         if not isinstance(old_m, dict): continue
         if mid in matches_dict: continue
         if mid in finished_known: continue
         st = old_m.get("start_time")
-        if st and now_ts > st and now_ts < st + 10800: # Прошло от 0 до 3 часов
+        if st and now_ts > st and now_ts < st + 10800:
+            if not old_m.get("status", "").startswith("LIVE"):
+                old_m["status"] = "LIVE"
             matches_dict[mid] = old_m
             preserved += 1
-            print(f"♻️ Оставлен в базе начавшийся матч: {old_m.get('title')}")
+            print(f"♻️ Матч помечен LIVE (ожидает лайв-данных): {old_m.get('title')}")
 
     if matches_dict:
         await firebase_put("matches", matches_dict)
