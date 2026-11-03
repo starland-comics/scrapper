@@ -58,14 +58,10 @@ FOTMOB_ID_OVERRIDES = {
     "Порт": 165255, "Порт ФК": 165255, "Порту": 9775,
     "Тун": 10191, "Акрон": 1068364, "Акрон Тольятти": 1068364,
     "Родина": 1066681, "Родина Москва": 1066681,
-    "Истанбул Башакшехир": 10068,
-    "Атлетик Бильбао": 9807,
-    "Синт-Трёйден": 10232,
-    "Эштрела Амадора": 14303,
-    "Витория Гимарайнш": 9778,
-    "Витория БА": 9779,
-    "Нью-Йорк Ред Буллс": 9805,
-    "Саламанка УДС": 82679,
+    "Истанбул Башакшехир": 10068, "Атлетик Бильбао": 9807,
+    "Синт-Трёйден": 10232, "Эштрела Амадора": 14303,
+    "Витория Гимарайнш": 9778, "Витория БА": 9779,
+    "Нью-Йорк Ред Буллс": 9805, "Саламанка УДС": 82679,
 }
 
 DIRECT_LOGO_URLS = {
@@ -130,7 +126,7 @@ LEAGUE_COUNTRY_HINTS = {
 LOGO_STATS = {"fotmob": 0, "thesportsdb": 0, "direct": 0, "fallback": 0, "cache": 0}
 FALLBACK_TEAMS = []
 
-def _normalize(s: str) -> str:
+def _normalize(s):
     s = (s or "").lower().strip()
     for w in (" fc", " cf", " sc", " ac", " fk", " afc", " club", " фк", " клуб"):
         s = s.replace(w, "").strip()
@@ -138,27 +134,23 @@ def _normalize(s: str) -> str:
 
 def is_valid_match(team1, team2, league):
     text = f"{team1} {team2} {league}".lower()
-    for word in BLACKLIST_WORDS:
-        if word in text:
-            return False
-    return True
+    return not any(word in text for word in BLACKLIST_WORDS)
 
-def league_to_country(comp_name: str) -> str | None:
+def league_to_country(comp_name):
     if not comp_name: return None
     low = comp_name.lower()
     for marker, country in LEAGUE_COUNTRY_HINTS.items():
         if marker in low: return country
     return None
 
-def is_national_team(name: str, league: str = "") -> bool:
-    n = _normalize(name)
-    l = (league or "").lower()
+def is_national_team(name, league=""):
+    n = _normalize(name); l = (league or "").lower()
     if n in COUNTRY_NAMES: return True
     if any(w in l for w in ("national", "international", "world cup", "euro ", "nations")): return True
     if "сборная" in n or "national" in n: return True
     return False
 
-def make_fallback_logo(name: str) -> str:
+def make_fallback_logo(name):
     initials = "".join(w[0] for w in name.split()[:2]).upper() or "?"
     color = "#" + hashlib.md5(name.encode("utf-8")).hexdigest()[:6]
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">'
@@ -167,14 +159,14 @@ def make_fallback_logo(name: str) -> str:
            f'font-family="Arial,sans-serif" font-weight="700">{initials}</text></svg>')
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
-def _is_fallback(logo: str) -> bool:
+def _is_fallback(logo):
     return isinstance(logo, str) and logo.startswith("data:image/svg")
 
-def _encode_key(k: str) -> str:
+def _encode_key(k):
     if not k: return "_"
     return "b64_" + base64.urlsafe_b64encode(k.encode("utf-8")).decode("ascii").rstrip("=")
 
-def _decode_key(k: str) -> str:
+def _decode_key(k):
     if k and isinstance(k, str) and k.startswith("b64_"):
         try:
             padding = "=" * (-len(k[4:]) % 4)
@@ -183,28 +175,23 @@ def _decode_key(k: str) -> str:
             return k
     return k
 
-def _cache_to_fb(cache: dict) -> dict:
-    return {_encode_key(k): v for k, v in cache.items() if k and v}
-
-def _cache_from_fb(raw) -> dict:
+def _cache_to_fb(cache): return {_encode_key(k): v for k, v in cache.items() if k and v}
+def _cache_from_fb(raw):
     if not raw or not isinstance(raw, dict): return {}
     return {_decode_key(k): v for k, v in raw.items()}
 
-def batch_translate_ru_to_en(texts: list[str]) -> dict[str, str]:
+def batch_translate_ru_to_en(texts):
     if not texts: return {}
     result = {}
     for i in range(0, len(texts), 40):
         chunk = texts[i:i+40]
-        SEP = " | "
-        joined = SEP.join(chunk)
         try:
-            params = {"client": "gtx", "sl": "ru", "tl": "en", "dt": "t", "q": joined}
-            r = cffi_requests.get(TRANSLATE_URL, params=params, timeout=10)
+            r = cffi_requests.get(TRANSLATE_URL, params={"client": "gtx", "sl": "ru", "tl": "en", "dt": "t", "q": " | ".join(chunk)}, timeout=10)
             if r.status_code == 200:
                 data = r.json()
-                segments = data[0] if data and data[0] else []
-                translated_full = "".join(seg[0] for seg in segments if seg and seg[0])
-                parts = [p.strip() for p in translated_full.split("|")]
+                segs = data[0] if data and data[0] else []
+                full = "".join(s[0] for s in segs if s and s[0])
+                parts = [p.strip() for p in full.split("|")]
                 if len(parts) == len(chunk):
                     for orig, trans in zip(chunk, parts):
                         for w in [" FC", "FC ", " FK", "FK ", " CF", "CF "]:
@@ -222,21 +209,16 @@ def pick_best_candidate(cands, target_name, country_hint):
     if not cands: return None
     cands = [c for c in cands if not is_national_team(c.get("name", ""), c.get("league", ""))]
     if not cands: return None
-
     target = _normalize(target_name)
     country_hint = (country_hint or "").lower()
-
     def base_score(c):
         return fuzz.token_set_ratio(target, _normalize(c.get("name", ""))) * 10 + min(c.get("score", 0), 200)
-
     if country_hint:
         matching = [c for c in cands if country_hint in (c.get("league") or "").lower() or country_hint in (c.get("country") or "").lower()]
-        if matching:
-            return max(matching, key=base_score)
-
+        if matching: return max(matching, key=base_score)
     return max(cands, key=base_score)
 
-def search_fotmob_candidates(team_name: str, name_en: str) -> list[dict]:
+def search_fotmob_candidates(team_name, name_en):
     queries = [name_en, team_name]
     seen, out = set(), []
     for q in queries:
@@ -258,11 +240,10 @@ def search_fotmob_candidates(team_name: str, name_en: str) -> list[dict]:
                         "logo": f"https://images.fotmob.com/image_resources/logo/teamlogo/{item['id']}.png",
                         "source": "fotmob",
                     })
-        except Exception:
-            pass
+        except Exception: pass
     return out
 
-async def search_thesportsdb(name_en: str) -> list[dict]:
+async def search_thesportsdb(name_en):
     variants = [name_en, f"{name_en} FC", f"FC {name_en}", f"{name_en} AFC", f"AFC {name_en}"]
     seen, out = set(), []
     for q in variants:
@@ -279,73 +260,56 @@ async def search_thesportsdb(name_en: str) -> list[dict]:
                     if "national" in (t.get("strTeam") or "").lower(): continue
                     out.append({"name": t.get("strTeam", ""), "league": (t.get("strLeague") or "").lower(),
                                 "country": (t.get("strCountry") or "").lower(), "logo": t.get("strBadge"), "source": "thesportsdb"})
-        except Exception:
-            continue
+        except Exception: continue
     return out
 
-async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: dict, force_refresh: bool = False) -> str:
+async def resolve_logo(team_ru, comp_name, cache, name_en_map, force_refresh=False):
     country = league_to_country(comp_name) or ""
     key = f"{team_ru}|{country}"
-
     if not force_refresh:
-        for existing_key in (key, team_ru):
-            existing = cache.get(existing_key)
-            if existing and not _is_fallback(existing):
+        for ek in (key, team_ru):
+            ex = cache.get(ek)
+            if ex and not _is_fallback(ex):
                 LOGO_STATS["cache"] += 1
-                return existing
-
+                return ex
     direct = DIRECT_LOGO_URLS.get(team_ru)
     if direct:
-        cache[key] = direct; LOGO_STATS["direct"] += 1
-        return direct
-
+        cache[key] = direct; LOGO_STATS["direct"] += 1; return direct
     fid = FOTMOB_ID_OVERRIDES.get(team_ru)
     if fid:
         logo = f"https://images.fotmob.com/image_resources/logo/teamlogo/{fid}.png"
-        cache[key] = logo; LOGO_STATS["fotmob"] += 1
-        return logo
-
+        cache[key] = logo; LOGO_STATS["fotmob"] += 1; return logo
     name_en = TEAM_OVERRIDES.get(team_ru) or name_en_map.get(team_ru) or team_ru
     best = pick_best_candidate(search_fotmob_candidates(team_ru, name_en), name_en, country)
     if best and best.get("logo"):
-        cache[key] = best["logo"]; LOGO_STATS["fotmob"] += 1
-        return best["logo"]
-
+        cache[key] = best["logo"]; LOGO_STATS["fotmob"] += 1; return best["logo"]
     best = pick_best_candidate(await search_thesportsdb(name_en), name_en, country)
     if best and best.get("logo"):
-        cache[key] = best["logo"]; LOGO_STATS["thesportsdb"] += 1
-        return best["logo"]
-
+        cache[key] = best["logo"]; LOGO_STATS["thesportsdb"] += 1; return best["logo"]
     fb = make_fallback_logo(team_ru)
-    cache[key] = fb
-    LOGO_STATS["fallback"] += 1
-    FALLBACK_TEAMS.append(team_ru)
-    return fb
+    cache[key] = fb; LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team_ru); return fb
 
-async def search_all_logos(teams_with_league: list, cache: dict, name_en_map: dict):
+async def search_all_logos(teams_with_league, cache, name_en_map):
     sem = asyncio.Semaphore(10)
     async def one(team, league, force):
         async with sem:
-            try:
-                await resolve_logo(team, league, cache, name_en_map, force_refresh=force)
+            try: await resolve_logo(team, league, cache, name_en_map, force_refresh=force)
             except Exception:
                 hint = league_to_country(league) or ""
                 cache[f"{team}|{hint}"] = make_fallback_logo(team)
-                LOGO_STATS["fallback"] += 1
-                FALLBACK_TEAMS.append(team)
+                LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team)
     await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
 def fetch_olimp_matches(url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json"}
-    for attempt in range(2):
+    for _ in range(2):
         try:
             r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=120)
             if r.status_code == 200: return r.json()
-        except Exception:
-            time.sleep(1)
+        except Exception: time.sleep(1)
     return []
 
-def extract_live_score_and_time(ev: dict):
+def extract_live_score_and_time(ev):
     score = None; minute = None
     sc = ev.get("score")
     if isinstance(sc, dict):
@@ -353,12 +317,10 @@ def extract_live_score_and_time(ev: dict):
         s2 = sc.get("team2") or sc.get("away") or sc.get("score2")
         if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
     elif isinstance(sc, str) and ":" in sc: score = sc
-
     if not score:
-        s1 = ev.get("score1") or ev.get("homeScore") or ev.get("team1Score")
-        s2 = ev.get("score2") or ev.get("awayScore") or ev.get("team2Score")
+        s1 = ev.get("score1") or ev.get("homeScore")
+        s2 = ev.get("score2") or ev.get("awayScore")
         if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
-
     t = ev.get("time")
     if isinstance(t, dict): minute = t.get("minute") or t.get("current") or t.get("elapsed")
     elif isinstance(t, (int, str)): minute = t
@@ -368,53 +330,54 @@ def extract_live_score_and_time(ev: dict):
 async def fetch_finished_matches(old_matches, new_match_ids):
     print("📥 Ищу результаты завершенных матчей...")
     finished_dict = {}
-    
-    missing_ids = set(old_matches.keys()) - new_match_ids
+    now = time.time()
+    missing_ids = set()
+    for mid, match in old_matches.items():
+        st = match.get("start_time") if isinstance(match, dict) else None
+        is_old = st and (now > st + 9000)  # 2.5 часа
+        if mid not in new_match_ids or is_old:
+            missing_ids.add(mid)
+
     if not missing_ids:
-        print("✅ Нет пропавших матчей.")
+        print("✅ Нет пропавших или старых матчей.")
         return
 
-    dates_to_fetch = set()
-    today = time.time()
-    dates_to_fetch.add(time.strftime("%Y-%m-%d", time.localtime(today)))
-    dates_to_fetch.add(time.strftime("%Y-%m-%d", time.localtime(today - 86400))) # Вчера
-    
+    dates = {
+        time.strftime("%Y-%m-%d", time.localtime(now)),
+        time.strftime("%Y-%m-%d", time.localtime(now - 86400)),
+    }
     tsdb_results = {}
     async with httpx.AsyncClient() as client:
-        for d in dates_to_fetch:
+        for d in dates:
             try:
                 r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=15)
                 if r.status_code == 200:
-                    events = (r.json() or {}).get("events") or []
-                    for ev in events:
+                    for ev in (r.json() or {}).get("events") or []:
                         h = _normalize(ev.get("strHomeTeam", ""))
                         a = _normalize(ev.get("strAwayTeam", ""))
-                        s1 = ev.get("intHomeScore")
-                        s2 = ev.get("intAwayScore")
+                        s1 = ev.get("intHomeScore"); s2 = ev.get("intAwayScore")
                         if s1 is not None and s2 is not None:
                             tsdb_results[f"{h}_{a}"] = {"score1": int(s1), "score2": int(s2)}
             except Exception as e:
-                print(f"   ⚠️ Ошибка загрузки результатов за {d}: {e}")
+                print(f"   ⚠️ Ошибка TSDB за {d}: {e}")
 
     for mid in missing_ids:
         match = old_matches[mid]
+        if not isinstance(match, dict): continue
         h = _normalize(match.get("home", ""))
         a = _normalize(match.get("away", ""))
-        
         if f"{h}_{a}" in tsdb_results:
             finished_dict[mid] = tsdb_results[f"{h}_{a}"]
         elif f"{a}_{h}" in tsdb_results:
             res = tsdb_results[f"{a}_{h}"]
             finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
         else:
-            print(f"   ⚠️ Не удалось найти результат для {match.get('title')} ({mid})")
-            
+            print(f"   ⚠️ Результат не найден для {match.get('title')} ({mid})")
+
     if finished_dict:
         print(f"✅ Найдено {len(finished_dict)} результатов.")
         async with httpx.AsyncClient() as client:
             await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
-    else:
-        print("⚠️ Результаты не найдены в TheSportsDB.")
 
 async def firebase_get(path):
     try:
@@ -431,57 +394,51 @@ async def firebase_put(path, data):
 
 async def main():
     print("🔄 [Scraper] Запуск...")
-    
+
     old_matches_dict = await firebase_get("matches") or {}
-    
+    if not isinstance(old_matches_dict, dict): old_matches_dict = {}
+
+    finished_known = await firebase_get("finished_matches") or {}
+    if not isinstance(finished_known, dict): finished_known = {}
+
     raw_cache = await firebase_get("team_logos") or {}
     logo_cache = _cache_from_fb(raw_cache)
     print(f"📥 В кэше логотипов: {len(logo_cache)}")
 
     print("📥 Загружаю LIVE...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
-    
     if not live_data:
-        print("   ⚠️ Olimpbet вернул пустой ответ для LIVE.")
+        print("   ⚠️ LIVE пустой ответ.")
     else:
-        sports_found = []
+        sports = []
         for item in live_data:
-            sport = item.get("payload", {}).get("sport", {})
+            sp = item.get("payload", {}).get("sport", {})
             comps = item.get("payload", {}).get("competitionsWithEvents", [])
-            events_count = sum(len(c.get("events", [])) for c in comps)
-            sports_found.append(f"ID={sport.get('id')} ({sport.get('name')}) - {events_count}")
-        print(f"   🔍 LIVE API: {', '.join(sports_found)}")
+            cnt = sum(len(c.get("events", [])) for c in comps)
+            sports.append(f"ID={sp.get('id')} ({sp.get('name')}) - {cnt}")
+        print(f"   🔍 LIVE API: {', '.join(sports)}")
 
     print("📥 Загружаю ЛИНИЮ...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
 
     all_matches = []
-
-    def parse_olimp_data(data, status_type):
+    def parse(data, status_type):
         count = 0
-        for sport_group in data:
-            sport = sport_group.get("payload", {}).get("sport", {})
-            if str(sport.get("id")) == "1":
-                comps = sport_group.get("payload", {}).get("competitionsWithEvents", [])
-                for comp in comps:
-                    comp_name = comp.get("competition", {}).get("name", "Футбол")
-                    for ev in comp.get("events", []):
-                        t1 = ev.get("team1Name", "")
-                        t2 = ev.get("team2Name", "")
-                        if t1 and t2:
-                            if is_valid_match(t1, t2, comp_name):
-                                all_matches.append((ev, status_type, comp_name))
-                                count += 1
-                            elif status_type == "LIVE":
-                                text = f"{t1} {t2} {comp_name}".lower()
-                                for word in BLACKLIST_WORDS:
-                                    if word in text:
-                                        print(f"      ❌ Отсеян LIVE матч: {t1} vs {t2} | Лига: {comp_name} (Слово: '{word}')")
-                                        break
+        for sg in data:
+            sport = sg.get("payload", {}).get("sport", {})
+            if str(sport.get("id")) != "1": continue
+            comps = sg.get("payload", {}).get("competitionsWithEvents", [])
+            for comp in comps:
+                comp_name = comp.get("competition", {}).get("name", "Футбол")
+                for ev in comp.get("events", []):
+                    t1 = ev.get("team1Name", ""); t2 = ev.get("team2Name", "")
+                    if t1 and t2 and is_valid_match(t1, t2, comp_name):
+                        all_matches.append((ev, status_type, comp_name))
+                        count += 1
         return count
 
-    live_count = parse_olimp_data(live_data, "LIVE")
-    line_count = parse_olimp_data(line_data, "Скоро")
+    live_count = parse(live_data, "LIVE")
+    line_count = parse(line_data, "Скоро")
     print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
 
     missing = set()
@@ -489,64 +446,71 @@ async def main():
         for t in (ev.get("team1Name"), ev.get("team2Name")):
             if not t: continue
             hint = league_to_country(league_name) or ""
-            existing = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not existing) or _is_fallback(existing)
+            ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
+            force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
             if force: missing.add((t, league_name, force))
 
     if missing:
         print(f"🔎 Поиск логотипов для {len(missing)} пар...")
-        all_teams = list({t for t, _, _ in missing})
-        name_en_map = batch_translate_ru_to_en(all_teams)
-
+        teams = list({t for t, _, _ in missing})
+        name_en_map = batch_translate_ru_to_en(teams)
         t0 = time.time()
         await search_all_logos(list(missing), logo_cache, name_en_map)
         print(f"✅ Обработано за {time.time()-t0:.1f}s")
-        print(f"📊 Источники: fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
+        print(f"📊 fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
 
-    payload = _cache_to_fb(logo_cache)
-    ok = await firebase_put("team_logos", payload)
+    ok = await firebase_put("team_logos", _cache_to_fb(logo_cache))
     print(f"💾 Кэш логотипов: {len(logo_cache)} записей, ok={ok}")
-
     if FALLBACK_TEAMS:
         print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
+    # Собираем свежие матчи из Olimpbet
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
         ev_id = ev.get("id")
+        mid = f"olimp_{ev_id}"
+        if mid in finished_known: continue  # Не перезаводим уже завершенные матчи
+
         t1 = ev.get("team1Name"); t2 = ev.get("team2Name")
         hint = league_to_country(league_name) or ""
-        home_logo = logo_cache.get(f"{t1}|{hint}") or logo_cache.get(t1, "")
-        away_logo = logo_cache.get(f"{t2}|{hint}") or logo_cache.get(t2, "")
+        hl = logo_cache.get(f"{t1}|{hint}") or logo_cache.get(t1, "")
+        al = logo_cache.get(f"{t2}|{hint}") or logo_cache.get(t2, "")
 
         p1 = px = p2 = None
         for out in ev.get("outcomes", []):
-            group_name = out.get("groupName", ""); short_name = out.get("shortName", "")
-            if "Исход" in group_name or "Результат" in group_name:
-                if short_name in ["П1", "1"]: p1 = out.get("probability")
-                elif short_name in ["X", "Х", "Ничья"]: px = out.get("probability")
-                elif short_name in ["П2", "2"]: p2 = out.get("probability")
+            gn = out.get("groupName", ""); sn = out.get("shortName", "")
+            if "Исход" in gn or "Результат" in gn:
+                if sn in ["П1", "1"]: p1 = out.get("probability")
+                elif sn in ["X", "Х", "Ничья"]: px = out.get("probability")
+                elif sn in ["П2", "2"]: p2 = out.get("probability")
 
-        score = "VS"
-        status_str = status_type
+        score = "VS"; status_str = status_type
         if status_type == "LIVE":
-            extracted_score, extracted_minute = extract_live_score_and_time(ev)
-            if extracted_score: score = extracted_score
-            if extracted_minute: status_str = f"LIVE {extracted_minute}'"
-
+            sc, mn = extract_live_score_and_time(ev)
+            if sc: score = sc
+            if mn: status_str = f"LIVE {mn}'"
         time_display = status_str
         if status_type == "Скоро":
-            start_ts = ev.get("startDateTime")
-            if start_ts:
-                dt = time.localtime(start_ts)
-                time_display = time.strftime("%d.%m %H:%M", dt)
+            st = ev.get("startDateTime")
+            if st: time_display = time.strftime("%d.%m %H:%M", time.localtime(st))
 
-        matches_dict[f"olimp_{ev_id}"] = {
+        matches_dict[mid] = {
             "title": f"{t1} - {t2}", "home": t1, "away": t2,
-            "homeLogo": home_logo, "awayLogo": away_logo,
-            "league": league_name, "status": time_display, "score": score,
+            "homeLogo": hl, "awayLogo": al, "league": league_name,
+            "status": time_display, "score": score,
             "start_time": ev.get("startDateTime"),
             "odds": {"1": p1, "X": px, "2": p2}
         }
+
+    # ЗАЩИТА ОТ ЗАТИРАНИЯ ЛАЙВА ЛИНИЕЙ: если матч уже был LIVE в базе — сохраняем его как есть
+    preserved = 0
+    for mid, old_m in old_matches_dict.items():
+        if not isinstance(old_m, dict): continue
+        if old_m.get("status", "").startswith("LIVE") and mid in matches_dict:
+            matches_dict[mid] = old_m
+            preserved += 1
+    if preserved:
+        print(f"🛡 Сохранено LIVE от перезаписи: {preserved}")
 
     if matches_dict:
         await firebase_put("matches", matches_dict)
