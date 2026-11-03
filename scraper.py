@@ -15,9 +15,6 @@ OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitio
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
-# Твой ключ API-Football
-APIFOOTBALL_KEY = "48a576d984d21c242b2dbea309b724e5"
-
 FOTMOB_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://www.fotmob.com/"
@@ -57,7 +54,6 @@ COUNTRY_NAMES = {
     "шотландия", "уэльс",
 }
 
-# Прямые ID FotMob для проблемных клубов
 FOTMOB_ID_OVERRIDES = {
     "Порт": 165255, "Порт ФК": 165255, "Порту": 9775,
     "Тун": 10191, "Акрон": 1068364, "Акрон Тольятти": 1068364,
@@ -65,10 +61,29 @@ FOTMOB_ID_OVERRIDES = {
     "Истанбул Башакшехир": 10068,
     "Атлетик Бильбао": 9807,
     "Синт-Трёйден": 10232,
-    "Эштрела Амадора": 14303,
+    "Эштрела Амора": 14303,
     "Витория Гимарайнш": 9778,
     "Витория БА": 9779,
     "Нью-Йорк Ред Буллс": 9805,
+}
+
+# Прямые ссылки на логотипы (FootyLogos CDN, Wikimedia, официальные сайты)
+DIRECT_LOGO_URLS = {
+    # Английские низшие лиги (FootyLogos)
+    "Харборо Таун": "https://www.footylogos.com/dls/logo/rgba-v1/harborough-town.png",
+    "Солсбери": "https://www.footylogos.com/dls/logo/rgba-v1/salisbury.png",
+    "Алвчерч": "https://www.footylogos.com/dls/logo/rgba-v1/alvechurch.png",
+    "Стаффорд Рейнджерс": "https://www.footylogos.com/dls/logo/rgba-v1/stafford-rangers.png",
+    "Вустер Сити": "https://www.footylogos.com/dls/logo/rgba-v1/worcester-city.png",
+    "Йовил Таун": "https://www.footylogos.com/dls/logo/rgba-v1/yeovil-town.png",
+    "Олтринчэм": "https://www.footylogos.com/dls/logo/rgba-v1/altrincham.png",
+    "Хорнчерч": "https://www.footylogos.com/dls/logo/rgba-v1/hornchurch.png",
+    "Рашден & Даймондс": "https://www.footylogos.com/dls/logo/rgba-v1/afc-rushden-diamonds.png",
+    "Галифакс Таун": "https://www.footylogos.com/dls/logo/rgba-v1/fc-halifax-town.png",
+    # Испанский клуб (Wikimedia)
+    "Анайтасуна": "https://upload.wikimedia.org/wikipedia/en/thumb/8/8a/CD_Anaitasuna_logo.png/180px-CD_Anaitasuna_logo.png",
+    # Казахстанский расформированный клуб — логотипа нет, оставляем заглушку
+    # "Хромтау": "",
 }
 
 TEAM_OVERRIDES = {
@@ -96,11 +111,11 @@ TEAM_OVERRIDES = {
     "Солсбери": "Salisbury FC",
     "Алвчерч": "Alvechurch FC",
     "Йовил Таун": "Yeovil Town",
-    "Галифакс Таун": "Halifax Town",
+    "Галифакс Таун": "FC Halifax Town",
     "Таранкон": "Tarazona",
     "Стаффорд Рейнджерс": "Stafford Rangers",
     "Вустер Сити": "Worcester City",
-    "Рашден & Даймондс": "Rushden & Diamonds",
+    "Рашден & Даймондс": "AFC Rushden & Diamonds",
     "Хорнчерч": "Hornchurch",
     "Олтринчэм": "Altrincham",
     "Харборо Таун": "Harborough Town",
@@ -123,7 +138,7 @@ LEAGUE_COUNTRY_HINTS = {
     "таджик": "tajikistan"
 }
 
-LOGO_STATS = {"fotmob": 0, "thesportsdb": 0, "apifootball": 0, "fallback": 0, "cache": 0}
+LOGO_STATS = {"fotmob": 0, "thesportsdb": 0, "direct": 0, "fallback": 0, "cache": 0}
 FALLBACK_TEAMS = []
 
 def _normalize(s: str) -> str:
@@ -259,7 +274,7 @@ def search_fotmob_candidates(team_name: str, name_en: str) -> list[dict]:
     return out
 
 async def search_thesportsdb(name_en: str) -> list[dict]:
-    variants = [name_en, f"{name_en} FC", f"FC {name_en}"]
+    variants = [name_en, f"{name_en} FC", f"FC {name_en}", f"{name_en} AFC", f"AFC {name_en}"]
     seen, out = set(), []
     for q in variants:
         if q in seen: continue
@@ -279,32 +294,6 @@ async def search_thesportsdb(name_en: str) -> list[dict]:
             continue
     return out
 
-async def search_apifootball(name_en: str) -> list[dict]:
-    if not APIFOOTBALL_KEY:
-        print("   ⚠️ APIFOOTBALL_KEY пустой")
-        return []
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get("https://v3.football.api-sports.io/teams",
-                                 params={"search": name_en}, headers={"x-apisports-key": APIFOOTBALL_KEY})
-            if r.status_code != 200:
-                print(f"   ⚠️ API-Football {r.status_code}: {r.text[:100]}")
-                return []
-            data = r.json()
-            if "errors" in data and data["errors"]:
-                print(f"   ⚠️ API-Football errors: {data['errors']}")
-                return []
-            out = []
-            for item in data.get("response", []):
-                t = item.get("team", {})
-                if not t.get("logo"): continue
-                out.append({"name": t.get("name", ""), "league": (t.get("country") or "").lower(),
-                            "country": (t.get("country") or "").lower(), "logo": t.get("logo"), "source": "apifootball"})
-            return out
-    except Exception as e:
-        print(f"   ⚠️ API-Football exception: {e}")
-        return []
-
 async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: dict, force_refresh: bool = False) -> str:
     country = league_to_country(comp_name) or ""
     key = f"{team_ru}|{country}"
@@ -316,29 +305,33 @@ async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: d
                 LOGO_STATS["cache"] += 1
                 return existing
 
+    # 1. Прямая ссылка (самый надёжный способ)
+    direct = DIRECT_LOGO_URLS.get(team_ru)
+    if direct:
+        cache[key] = direct; LOGO_STATS["direct"] += 1
+        return direct
+
+    # 2. FotMob по ID
     fid = FOTMOB_ID_OVERRIDES.get(team_ru)
     if fid:
         logo = f"https://images.fotmob.com/image_resources/logo/teamlogo/{fid}.png"
         cache[key] = logo; LOGO_STATS["fotmob"] += 1
         return logo
 
+    # 3. Поиск в FotMob
     name_en = TEAM_OVERRIDES.get(team_ru) or name_en_map.get(team_ru) or team_ru
-
     best = pick_best_candidate(search_fotmob_candidates(team_ru, name_en), name_en, country)
     if best and best.get("logo"):
         cache[key] = best["logo"]; LOGO_STATS["fotmob"] += 1
         return best["logo"]
 
+    # 4. TheSportsDB
     best = pick_best_candidate(await search_thesportsdb(name_en), name_en, country)
     if best and best.get("logo"):
         cache[key] = best["logo"]; LOGO_STATS["thesportsdb"] += 1
         return best["logo"]
 
-    best = pick_best_candidate(await search_apifootball(name_en), name_en, country)
-    if best and best.get("logo"):
-        cache[key] = best["logo"]; LOGO_STATS["apifootball"] += 1
-        return best["logo"]
-
+    # 5. Fallback SVG
     fb = make_fallback_logo(team_ru)
     cache[key] = fb
     LOGO_STATS["fallback"] += 1
@@ -445,7 +438,7 @@ async def main():
             if not t: continue
             hint = league_to_country(league_name) or ""
             existing = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            force = (t in FOTMOB_ID_OVERRIDES) or (not existing) or _is_fallback(existing)
+            force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not existing) or _is_fallback(existing)
             if force: missing.add((t, league_name, force))
 
     if missing:
@@ -456,7 +449,7 @@ async def main():
         t0 = time.time()
         await search_all_logos(list(missing), logo_cache, name_en_map)
         print(f"✅ Обработано {len(missing)} за {time.time()-t0:.1f}s")
-        print(f"📊 Источники: fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, apifootball={LOGO_STATS['apifootball']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
+        print(f"📊 Источники: fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
 
     payload = _cache_to_fb(logo_cache)
     ok = await firebase_put("team_logos", payload)
