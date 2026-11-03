@@ -12,8 +12,6 @@ from rapidfuzz import fuzz
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events?vids%5B%5D=1"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
-# Эндпоинт результатов (может потребовать доработки, если Olimpbet его поменяет)
-OLIMP_RESULTS_URL = "https://www.olimp.bet/api/v4/0/results/sports-with-competitions-with-events"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
@@ -67,6 +65,7 @@ FOTMOB_ID_OVERRIDES = {
     "Витория Гимарайнш": 9778,
     "Витория БА": 9779,
     "Нью-Йорк Ред Буллс": 9805,
+    "Саламанка УДС": 82679,
 }
 
 DIRECT_LOGO_URLS = {
@@ -365,33 +364,61 @@ def extract_live_score_and_time(ev: dict):
     if not minute: minute = ev.get("minute") or ev.get("currentMinute") or ev.get("liveTime")
     return score, str(minute) if minute is not None else None
 
-async def fetch_finished_matches():
-    print("📥 Загружаю РЕЗУЛЬТАТЫ матчей...")
-    results_data = fetch_olimp_matches(OLIMP_RESULTS_URL)
-    
+async def fetch_finished_matches(old_matches, new_match_ids):
+    print("📥 Ищу результаты завершенных матчей...")
     finished_dict = {}
-    if results_data:
-        for sport_group in results_data:
-            sport = sport_group.get("payload", {}).get("sport", {})
-            if str(sport.get("id")) == "1": # Футбол
-                comps = sport_group.get("payload", {}).get("competitionsWithEvents", [])
-                for comp in comps:
-                    for ev in comp.get("events", []):
-                        ev_id = ev.get("id")
-                        s1 = ev.get("score1") or ev.get("homeScore") or 0
-                        s2 = ev.get("score2") or ev.get("awayScore") or 0
-                        if ev_id:
-                            finished_dict[f"olimp_{ev_id}"] = {"score1": s1, "score2": s2}
-                            
+    
+    missing_ids = set(old_matches.keys()) - new_match_ids
+    if not missing_ids:
+        print("✅ Нет пропавших матчей (все еще в линии).")
+        return
+
+    dates_to_fetch = set()
+    for mid in missing_ids:
+        match = old_matches[mid]
+        st = match.get("start_time")
+        if st:
+            dt = time.localtime(st)
+            dates_to_fetch.add(time.strftime("%Y-%m-%d", dt))
+        else:
+            dates_to_fetch.add(time.strftime("%Y-%m-%d"))
+    
+    tsdb_results = {}
+    async with httpx.AsyncClient() as client:
+        for d in dates_to_fetch:
+            try:
+                r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=10)
+                if r.status_code == 200:
+                    events = (r.json() or {}).get("events") or []
+                    for ev in events:
+                        h = _normalize(ev.get("strHomeTeam", ""))
+                        a = _normalize(ev.get("strAwayTeam", ""))
+                        s1 = ev.get("intHomeScore")
+                        s2 = ev.get("intAwayScore")
+                        if s1 is not None and s2 is not None:
+                            tsdb_results[f"{h}_{a}"] = {"score1": int(s1), "score2": int(s2)}
+            except Exception as e:
+                print(f"   ⚠️ Ошибка загрузки результатов за {d}: {e}")
+
+    for mid in missing_ids:
+        match = old_matches[mid]
+        h = _normalize(match.get("home", ""))
+        a = _normalize(match.get("away", ""))
+        
+        if f"{h}_{a}" in tsdb_results:
+            finished_dict[mid] = tsdb_results[f"{h}_{a}"]
+        elif f"{a}_{h}" in tsdb_results:
+            res = tsdb_results[f"{a}_{h}"]
+            finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
+        else:
+            print(f"   ⚠️ Не удалось найти результат для {match.get('title')} ({mid})")
+            
     if finished_dict:
         print(f"✅ Найдено {len(finished_dict)} результатов.")
-        try:
-            async with httpx.AsyncClient() as client:
-                await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
-        except Exception as e:
-            print(f"⚠️ Ошибка сохранения результатов: {e}")
+        async with httpx.AsyncClient() as client:
+            await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
     else:
-        print("⚠️ Результаты не найдены. Возможно, эндпоинт Olimpbet изменился.")
+        print("⚠️ Результаты не найдены в TheSportsDB.")
 
 async def firebase_get(path):
     try:
@@ -408,23 +435,26 @@ async def firebase_put(path, data):
 
 async def main():
     print("🔄 [Scraper] Запуск...")
+    
+    old_matches_dict = await firebase_get("matches") or {}
+    
     raw_cache = await firebase_get("team_logos") or {}
     logo_cache = _cache_from_fb(raw_cache)
-    print(f"📥 В кэше логотипов: {len(logo_cache)} (в Firebase: {len(raw_cache)})")
+    print(f"📥 В кэше логотипов: {len(logo_cache)}")
 
     print("📥 Загружаю LIVE...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
     
     if not live_data:
-        print("   ⚠️ Olimpbet вернул пустой ответ для LIVE. Возможно, блокировка или смена API.")
+        print("   ⚠️ Olimpbet вернул пустой ответ для LIVE.")
     else:
         sports_found = []
         for item in live_data:
             sport = item.get("payload", {}).get("sport", {})
             comps = item.get("payload", {}).get("competitionsWithEvents", [])
             events_count = sum(len(c.get("events", [])) for c in comps)
-            sports_found.append(f"ID={sport.get('id')} ({sport.get('name')}) - {events_count} событий")
-        print(f"   🔍 LIVE API вернул виды спорта: {', '.join(sports_found)}")
+            sports_found.append(f"ID={sport.get('id')} ({sport.get('name')}) - {events_count}")
+        print(f"   🔍 LIVE API: {', '.join(sports_found)}")
 
     print("📥 Загружаю ЛИНИЮ...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
@@ -442,9 +472,16 @@ async def main():
                     for ev in comp.get("events", []):
                         t1 = ev.get("team1Name", "")
                         t2 = ev.get("team2Name", "")
-                        if t1 and t2 and is_valid_match(t1, t2, comp_name):
-                            all_matches.append((ev, status_type, comp_name))
-                            count += 1
+                        if t1 and t2:
+                            if is_valid_match(t1, t2, comp_name):
+                                all_matches.append((ev, status_type, comp_name))
+                                count += 1
+                            elif status_type == "LIVE":
+                                text = f"{t1} {t2} {comp_name}".lower()
+                                for word in BLACKLIST_WORDS:
+                                    if word in text:
+                                        print(f"      ❌ Отсеян LIVE матч: {t1} vs {t2} | Лига: {comp_name} (Слово: '{word}')")
+                                        break
         return count
 
     live_count = parse_olimp_data(live_data, "LIVE")
@@ -461,13 +498,13 @@ async def main():
             if force: missing.add((t, league_name, force))
 
     if missing:
-        print(f"🔎 Поиск логотипов для {len(missing)} пар (team, league)...")
+        print(f"🔎 Поиск логотипов для {len(missing)} пар...")
         all_teams = list({t for t, _, _ in missing})
         name_en_map = batch_translate_ru_to_en(all_teams)
 
         t0 = time.time()
         await search_all_logos(list(missing), logo_cache, name_en_map)
-        print(f"✅ Обработано {len(missing)} за {time.time()-t0:.1f}s")
+        print(f"✅ Обработано за {time.time()-t0:.1f}s")
         print(f"📊 Источники: fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
 
     payload = _cache_to_fb(logo_cache)
@@ -519,7 +556,7 @@ async def main():
         await firebase_put("matches", matches_dict)
         print(f"🔥 Сохранено {len(matches_dict)} матчей")
 
-    await fetch_finished_matches()
+    await fetch_finished_matches(old_matches_dict, set(matches_dict.keys()))
 
 if __name__ == "__main__":
     asyncio.run(main())
