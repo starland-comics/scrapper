@@ -104,6 +104,9 @@ TEAM_OVERRIDES = {
     "Галифакс Таун": "FC Halifax Town", "Таранкон": "Tarazona", "Стаффорд Рейнджерс": "Stafford Rangers",
     "Вустер Сити": "Worcester City", "Рашден & Даймондс": "AFC Rushden & Diamonds",
     "Хорнчерч": "Hornchurch", "Олтринчэм": "Altrincham", "Харборо Таун": "Harborough Town",
+    "Аль-Нахда Бурайми": "Al-Nahda Buraimi", "Аль-Вахда Абу-Даби": "Al Wahda Abu Dhabi",
+    "Аль-Файсали Амман": "Al Faisaly Amman", "Аль-Джазира Абу-Даби": "Al Jazira Abu Dhabi",
+    "Аль-Мухаррак": "Al-Muharraq",
 }
 
 LEAGUE_COUNTRY_HINTS = {
@@ -329,17 +332,22 @@ def extract_live_score_and_time(ev):
 
 async def fetch_finished_matches(old_matches, new_match_ids):
     print("📥 Ищу результаты завершенных матчей...")
+    finished_known = await firebase_get("finished_matches") or {}
+    if not isinstance(finished_known, dict): finished_known = {}
+    
     finished_dict = {}
     now = time.time()
     missing_ids = set()
     for mid, match in old_matches.items():
-        st = match.get("start_time") if isinstance(match, dict) else None
-        is_old = st and (now > st + 9000)  # 2.5 часа
+        if not isinstance(match, dict): continue
+        if mid in finished_known: continue
+        st = match.get("start_time")
+        is_old = st and (now > st + 9000)
         if mid not in new_match_ids or is_old:
             missing_ids.add(mid)
 
     if not missing_ids:
-        print("✅ Нет пропавших или старых матчей.")
+        print("✅ Нет новых завершенных матчей.")
         return
 
     dates = {
@@ -363,19 +371,24 @@ async def fetch_finished_matches(old_matches, new_match_ids):
 
     for mid in missing_ids:
         match = old_matches[mid]
-        if not isinstance(match, dict): continue
         h = _normalize(match.get("home", ""))
         a = _normalize(match.get("away", ""))
+
         if f"{h}_{a}" in tsdb_results:
             finished_dict[mid] = tsdb_results[f"{h}_{a}"]
         elif f"{a}_{h}" in tsdb_results:
             res = tsdb_results[f"{a}_{h}"]
             finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
         else:
-            print(f"   ⚠️ Результат не найден для {match.get('title')} ({mid})")
+            st = match.get("start_time")
+            if st and now > st + 5 * 3600:
+                print(f"   💀 Void (>5ч без результата): {match.get('title')}")
+                finished_dict[mid] = {"void": True}
+            else:
+                print(f"   ⏳ Ждём результат: {match.get('title')} (стартовал {int((now - st)/60) if st else '?'} мин назад)")
 
     if finished_dict:
-        print(f"✅ Найдено {len(finished_dict)} результатов.")
+        print(f"✅ Обработано {len(finished_dict)} матчей.")
         async with httpx.AsyncClient() as client:
             await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
 
@@ -464,12 +477,11 @@ async def main():
     if FALLBACK_TEAMS:
         print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
-    # Собираем свежие матчи из Olimpbet
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
         ev_id = ev.get("id")
         mid = f"olimp_{ev_id}"
-        if mid in finished_known: continue  # Не перезаводим уже завершенные матчи
+        if mid in finished_known: continue
 
         t1 = ev.get("team1Name"); t2 = ev.get("team2Name")
         hint = league_to_country(league_name) or ""
@@ -502,7 +514,6 @@ async def main():
             "odds": {"1": p1, "X": px, "2": p2}
         }
 
-    # ЗАЩИТА ОТ ЗАТИРАНИЯ ЛАЙВА ЛИНИЕЙ: если матч уже был LIVE в базе — сохраняем его как есть
     preserved = 0
     for mid, old_m in old_matches_dict.items():
         if not isinstance(old_m, dict): continue
