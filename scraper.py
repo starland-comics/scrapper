@@ -12,6 +12,8 @@ from rapidfuzz import fuzz
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/broadcast/sports-with-competitions-with-events?vids%5B%5D=1"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
+# Эндпоинт результатов (может потребовать доработки, если Olimpbet его поменяет)
+OLIMP_RESULTS_URL = "https://www.olimp.bet/api/v4/0/results/sports-with-competitions-with-events"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
@@ -61,15 +63,13 @@ FOTMOB_ID_OVERRIDES = {
     "Истанбул Башакшехир": 10068,
     "Атлетик Бильбао": 9807,
     "Синт-Трёйден": 10232,
-    "Эштрела Амора": 14303,
+    "Эштрела Амадора": 14303,
     "Витория Гимарайнш": 9778,
     "Витория БА": 9779,
     "Нью-Йорк Ред Буллс": 9805,
 }
 
-# Прямые ссылки на логотипы (FootyLogos CDN, Wikimedia, официальные сайты)
 DIRECT_LOGO_URLS = {
-    # Английские низшие лиги (FootyLogos)
     "Харборо Таун": "https://www.footylogos.com/dls/logo/rgba-v1/harborough-town.png",
     "Солсбери": "https://www.footylogos.com/dls/logo/rgba-v1/salisbury.png",
     "Алвчерч": "https://www.footylogos.com/dls/logo/rgba-v1/alvechurch.png",
@@ -80,10 +80,7 @@ DIRECT_LOGO_URLS = {
     "Хорнчерч": "https://www.footylogos.com/dls/logo/rgba-v1/hornchurch.png",
     "Рашден & Даймондс": "https://www.footylogos.com/dls/logo/rgba-v1/afc-rushden-diamonds.png",
     "Галифакс Таун": "https://www.footylogos.com/dls/logo/rgba-v1/fc-halifax-town.png",
-    # Испанский клуб (Wikimedia)
     "Анайтасуна": "https://upload.wikimedia.org/wikipedia/en/thumb/8/8a/CD_Anaitasuna_logo.png/180px-CD_Anaitasuna_logo.png",
-    # Казахстанский расформированный клуб — логотипа нет, оставляем заглушку
-    # "Хромтау": "",
 }
 
 TEAM_OVERRIDES = {
@@ -107,18 +104,10 @@ TEAM_OVERRIDES = {
     "Конган": "Khon Kaen", "Сабах Баку": "Sabah", "Истанбул Башакшехир": "Istanbul Basaksehir",
     "Унив. Крайова": "Universitatea Craiova", "Интер Эскальдес": "Inter Club d'Escaldes",
     "Эштрела Амадора": "Estrela Amadora",
-    # Низшие лиги — английские названия для поиска
-    "Солсбери": "Salisbury FC",
-    "Алвчерч": "Alvechurch FC",
-    "Йовил Таун": "Yeovil Town",
-    "Галифакс Таун": "FC Halifax Town",
-    "Таранкон": "Tarazona",
-    "Стаффорд Рейнджерс": "Stafford Rangers",
-    "Вустер Сити": "Worcester City",
-    "Рашден & Даймондс": "AFC Rushden & Diamonds",
-    "Хорнчерч": "Hornchurch",
-    "Олтринчэм": "Altrincham",
-    "Харборо Таун": "Harborough Town",
+    "Солсбери": "Salisbury FC", "Алвчерч": "Alvechurch FC", "Йовил Таун": "Yeovil Town",
+    "Галифакс Таун": "FC Halifax Town", "Таранкон": "Tarazona", "Стаффорд Рейнджерс": "Stafford Rangers",
+    "Вустер Сити": "Worcester City", "Рашден & Даймондс": "AFC Rushden & Diamonds",
+    "Хорнчерч": "Hornchurch", "Олтринчэм": "Altrincham", "Харборо Таун": "Harborough Town",
 }
 
 LEAGUE_COUNTRY_HINTS = {
@@ -305,33 +294,28 @@ async def resolve_logo(team_ru: str, comp_name: str, cache: dict, name_en_map: d
                 LOGO_STATS["cache"] += 1
                 return existing
 
-    # 1. Прямая ссылка (самый надёжный способ)
     direct = DIRECT_LOGO_URLS.get(team_ru)
     if direct:
         cache[key] = direct; LOGO_STATS["direct"] += 1
         return direct
 
-    # 2. FotMob по ID
     fid = FOTMOB_ID_OVERRIDES.get(team_ru)
     if fid:
         logo = f"https://images.fotmob.com/image_resources/logo/teamlogo/{fid}.png"
         cache[key] = logo; LOGO_STATS["fotmob"] += 1
         return logo
 
-    # 3. Поиск в FotMob
     name_en = TEAM_OVERRIDES.get(team_ru) or name_en_map.get(team_ru) or team_ru
     best = pick_best_candidate(search_fotmob_candidates(team_ru, name_en), name_en, country)
     if best and best.get("logo"):
         cache[key] = best["logo"]; LOGO_STATS["fotmob"] += 1
         return best["logo"]
 
-    # 4. TheSportsDB
     best = pick_best_candidate(await search_thesportsdb(name_en), name_en, country)
     if best and best.get("logo"):
         cache[key] = best["logo"]; LOGO_STATS["thesportsdb"] += 1
         return best["logo"]
 
-    # 5. Fallback SVG
     fb = make_fallback_logo(team_ru)
     cache[key] = fb
     LOGO_STATS["fallback"] += 1
@@ -381,6 +365,34 @@ def extract_live_score_and_time(ev: dict):
     if not minute: minute = ev.get("minute") or ev.get("currentMinute") or ev.get("liveTime")
     return score, str(minute) if minute is not None else None
 
+async def fetch_finished_matches():
+    print("📥 Загружаю РЕЗУЛЬТАТЫ матчей...")
+    results_data = fetch_olimp_matches(OLIMP_RESULTS_URL)
+    
+    finished_dict = {}
+    if results_data:
+        for sport_group in results_data:
+            sport = sport_group.get("payload", {}).get("sport", {})
+            if str(sport.get("id")) == "1": # Футбол
+                comps = sport_group.get("payload", {}).get("competitionsWithEvents", [])
+                for comp in comps:
+                    for ev in comp.get("events", []):
+                        ev_id = ev.get("id")
+                        s1 = ev.get("score1") or ev.get("homeScore") or 0
+                        s2 = ev.get("score2") or ev.get("awayScore") or 0
+                        if ev_id:
+                            finished_dict[f"olimp_{ev_id}"] = {"score1": s1, "score2": s2}
+                            
+    if finished_dict:
+        print(f"✅ Найдено {len(finished_dict)} результатов.")
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
+        except Exception as e:
+            print(f"⚠️ Ошибка сохранения результатов: {e}")
+    else:
+        print("⚠️ Результаты не найдены. Возможно, эндпоинт Olimpbet изменился.")
+
 async def firebase_get(path):
     try:
         async with httpx.AsyncClient() as client:
@@ -402,6 +414,18 @@ async def main():
 
     print("📥 Загружаю LIVE...")
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
+    
+    if not live_data:
+        print("   ⚠️ Olimpbet вернул пустой ответ для LIVE. Возможно, блокировка или смена API.")
+    else:
+        sports_found = []
+        for item in live_data:
+            sport = item.get("payload", {}).get("sport", {})
+            comps = item.get("payload", {}).get("competitionsWithEvents", [])
+            events_count = sum(len(c.get("events", [])) for c in comps)
+            sports_found.append(f"ID={sport.get('id')} ({sport.get('name')}) - {events_count} событий")
+        print(f"   🔍 LIVE API вернул виды спорта: {', '.join(sports_found)}")
+
     print("📥 Загружаю ЛИНИЮ...")
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
 
@@ -426,11 +450,6 @@ async def main():
     live_count = parse_olimp_data(live_data, "LIVE")
     line_count = parse_olimp_data(line_data, "Скоро")
     print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
-
-    if live_count > 0:
-        sample = next((m for m in all_matches if m[1] == "LIVE"), None)
-        if sample:
-            print(f"   DEBUG LIVE full: {json.dumps(sample[0], ensure_ascii=False)[:3000]}")
 
     missing = set()
     for ev, _, league_name in all_matches:
@@ -499,6 +518,8 @@ async def main():
     if matches_dict:
         await firebase_put("matches", matches_dict)
         print(f"🔥 Сохранено {len(matches_dict)} матчей")
+
+    await fetch_finished_matches()
 
 if __name__ == "__main__":
     asyncio.run(main())
