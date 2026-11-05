@@ -633,18 +633,29 @@ async def main():
             force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
             if force: missing.add((t, league_name, force))
 
+    # ИСПРАВЛЕНО: проверяем старые LIVE-матчи на соответствие новым правилам
     stale_live_matches = []
     for mid, old_m in old_matches_dict.items():
         if not isinstance(old_m, dict): continue
         if not old_m.get("status", "").startswith("LIVE"): continue
         if mid in finished_known: continue
+        
+        t1_old = old_m.get("home", "")
+        t2_old = old_m.get("away", "")
+        league_old = old_m.get("league", "")
+        
+        # Если старый матч не проходит новый белый список — удаляем
+        if not is_valid_match(t1_old, t2_old, league_old):
+            print(f"   🗑 Удаляю мусорный LIVE из базы: {old_m.get('title')} | {league_old}")
+            continue
+
         stale_live_matches.append((mid, old_m))
-        hint = league_to_country(old_m.get("league", "")) or ""
+        hint = league_to_country(league_old) or ""
         for t in (old_m.get("home"), old_m.get("away")):
             if not t: continue
             ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
             if not ex or _is_fallback(ex):
-                missing.add((t, old_m.get("league", ""), True))
+                missing.add((t, league_old, True))
 
     if stale_live_matches:
         print(f"🔁 Найдено {len(stale_live_matches)} 'зависших' LIVE-матчей — обновляю логотипы")
