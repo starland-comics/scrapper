@@ -445,12 +445,15 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         if not isinstance(match, dict): continue
         if mid in finished_known: continue
         st = match.get("start_time")
-        is_old = st and (now > st + 10800)
+        
+        # 2 часа 10 минут (7800 сек) - матч 100% закончился
+        is_old = st and (now > st + 7800) 
+        
         if (mid not in new_match_ids and is_old) or (mid in new_match_ids and is_old):
             missing_ids.add(mid)
 
     if not missing_ids:
-        print("✅ Нет новых завершенных матчей (>3ч).")
+        print("✅ Нет новых завершенных матчей (>2ч).")
         return
 
     print(f"🔍 Проверяю {len(missing_ids)} матчей на результат:")
@@ -503,11 +506,12 @@ async def fetch_finished_matches(old_matches, new_match_ids):
                 print(f"   ✅ [TSDB] {match.get('title')}: {res['score2']}:{res['score1']}")
             else:
                 st = match.get("start_time")
-                if st and now > st + 5 * 3600:
-                    print(f"   💀 [VOID] {match.get('title')} — прошло >5ч, ставка вернётся")
+                # Возврат (Void) через 4 часа, если счёт так и не нашли
+                if st and now > st + 14400:
+                    print(f"   💀 [VOID] {match.get('title')} — прошло >4ч, ставка вернётся")
                     finished_dict[mid] = {"void": True}
                 else:
-                    print(f"   ⏳ [ЖДЁМ] {match.get('title')} — матч ещё может идти или обновляется")
+                    print(f"   ⏳ [ЖДЁМ] {match.get('title')} — матч ещё может обновляться")
 
     if finished_dict:
         print(f"✅ Итого обработано {len(finished_dict)} матчей. Записываю в finished_matches.")
