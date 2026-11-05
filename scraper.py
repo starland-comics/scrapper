@@ -93,7 +93,7 @@ TEAM_OVERRIDES = {
     "Аль-Кадисия Хубар": "Al-Qadsiah", "Аль-Шабаб Рияд": "Al-Shabab", "Аль-Наср Рияд": "Al-Nassr",
     "Аль-Хиляль Рияд": "Al-Hilal", "Аль-Ахли Джидда": "Al-Ahli", "Аль-Иттихад Джидда": "Al-Ittihad",
     "Аль-Иттифак": "Al-Ettifaq", "Аль-Таавун": "Al-Taawoun", "Аль-Фатех": "Al-Fateh",
-    "Аль-Фейха": "Al-Fayha", "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazm",
+    "Аль-Фейха": "Al-Fayha", "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazem",
     "Эстеглаль Тегеран": "Esteghlal", "Тэджон Ситизен": "Daejeon Citizen", "Чонбук": "Jeonbuk",
     "Штурм": "Sturm Graz", "Камбур": "Cambuur", "ВПР Астана": "Astana", "Хромтау": "Khromtau",
     "Кайсар": "Kaisar", "Нью-Йорк Ред Буллс": "New York Red Bulls", "Лос-Анджелес Гэлакси": "LA Galaxy",
@@ -374,6 +374,22 @@ def extract_live_score_and_time(ev):
                 if any(x in vl for x in ["1h", "1st", "первый тайм"]): minute = "1H"; break
                 if any(x in vl for x in ["2h", "2nd", "второй тайм"]): minute = "2H"; break
 
+    if minute is None:
+        start_ts = ev.get("startDateTime")
+        if start_ts:
+            now = time.time()
+            elapsed_mins = (now - start_ts) / 60.0
+            if elapsed_mins < 0:
+                minute = 0
+            elif elapsed_mins < 47:
+                minute = int(elapsed_mins)
+            elif elapsed_mins < 62:
+                minute = "HT"
+            elif elapsed_mins < 107:
+                minute = int(elapsed_mins) - 15
+            else:
+                minute = "FT"
+
     return score, minute
 
 def build_status(status_type, minute):
@@ -393,7 +409,6 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-# --- НОВАЯ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ РЕЗУЛЬТАТОВ ИЗ OLIMPBET ---
 async def fetch_olimp_results():
     print("📥 Загружаю результаты из Olimpbet...")
     results_dict = {}
@@ -438,14 +453,12 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         print("✅ Нет новых завершенных матчей (>3ч).")
         return
 
-    # Сначала берем результаты напрямую из Олимбета
     olimp_results = await fetch_olimp_results()
     for mid in missing_ids:
         if mid in olimp_results:
             finished_dict[mid] = olimp_results[mid]
             print(f"   ✅ Счёт из Olimpbet для {mid}: {olimp_results[mid]}")
 
-    # Для остальных пробуем TheSportsDB
     missing_after_olimp = missing_ids - set(finished_dict.keys())
     
     if missing_after_olimp:
