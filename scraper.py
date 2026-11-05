@@ -445,10 +445,7 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         if not isinstance(match, dict): continue
         if mid in finished_known: continue
         st = match.get("start_time")
-        
-        # 2 часа 10 минут (7800 сек) - матч 100% закончился
-        is_old = st and (now > st + 7800) 
-        
+        is_old = st and (now > st + 7800)
         if (mid not in new_match_ids and is_old) or (mid in new_match_ids and is_old):
             missing_ids.add(mid)
 
@@ -500,18 +497,33 @@ async def fetch_finished_matches(old_matches, new_match_ids):
             if f"{h}_{a}" in tsdb_results:
                 finished_dict[mid] = tsdb_results[f"{h}_{a}"]
                 print(f"   ✅ [TSDB] {match.get('title')}: {tsdb_results[f'{h}_{a}']['score1']}:{tsdb_results[f'{h}_{a}']['score2']}")
+                continue
             elif f"{a}_{h}" in tsdb_results:
                 res = tsdb_results[f"{a}_{h}"]
                 finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
                 print(f"   ✅ [TSDB] {match.get('title')}: {res['score2']}:{res['score1']}")
+                continue
+
+            existing_finished = await firebase_get(f"finished_matches/{mid}")
+            if isinstance(existing_finished, dict) and "score1" in existing_finished and existing_finished.get("source") == "live_last":
+                print(f"   🎯 [LIVE_LAST] {match.get('title')}: {existing_finished['score1']}:{existing_finished['score2']} (уже сохранено)")
+                continue
+
+            match_score = match.get("score", "")
+            if ":" in match_score:
+                try:
+                    s1, s2 = [int(x.strip()) for x in match_score.split(":")]
+                    print(f"   🎯 [МАТЧ] {match.get('title')}: {s1}:{s2} (из поля score)")
+                    finished_dict[mid] = {"score1": s1, "score2": s2, "source": "match_score"}
+                    continue
+                except: pass
+
+            st = match.get("start_time")
+            if st and now > st + 9000:
+                print(f"   💀 [VOID] {match.get('title')} — прошло >2.5ч, счёта нет, возврат")
+                finished_dict[mid] = {"void": True}
             else:
-                st = match.get("start_time")
-                # Возврат (Void) через 4 часа, если счёт так и не нашли
-                if st and now > st + 14400:
-                    print(f"   💀 [VOID] {match.get('title')} — прошло >4ч, ставка вернётся")
-                    finished_dict[mid] = {"void": True}
-                else:
-                    print(f"   ⏳ [ЖДЁМ] {match.get('title')} — матч ещё может обновляться")
+                print(f"   ⏳ [ЖДЁМ] {match.get('title')} — ещё не прошло 2.5ч с начала")
 
     if finished_dict:
         print(f"✅ Итого обработано {len(finished_dict)} матчей. Записываю в finished_matches.")
