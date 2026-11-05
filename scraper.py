@@ -22,7 +22,6 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-# Расширенный блэклист (все возрастные группы и мусор)
 BLACKLIST_WORDS = [
     "люб", "жен", "мол", "дубл", "резерв", "академ",
     "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
@@ -33,16 +32,12 @@ BLACKLIST_WORDS = [
     "обе забьют", "пенальти", "карточк"
 ]
 
-# Белый список (Добавлены еврокубки и сборные)
 ALLOWED_LEAGUES = [
-    # Страны
     "испан", "франц", "англ", "итал", "герман", 
     "португал", "нидерланд", "голланд", "бразил", 
     "росси", "украин", "казах", "саудов", "турц", 
     "сша", "mls",
-    # Еврокубки
     "чемпионов", "европы", "конференций", "суперкубок",
-    # Сборные и международные турниры
     "сборная", "сборных", "мира", "евро", "наций", 
     "отбор", "товарищеск", "копа", "кубок азии", "кубок африки"
 ]
@@ -157,11 +152,9 @@ def _normalize(s):
 def is_valid_match(team1, team2, league):
     text = f"{team1} {team2} {league}".lower()
     
-    # 1. Отсекаем мусор (жен, мол, углы и т.д.)
     if any(word in text for word in BLACKLIST_WORDS):
         return False
         
-    # 2. Проверяем, что лига из разрешенного списка
     if not any(allowed in league.lower() for allowed in ALLOWED_LEAGUES):
         return False
         
@@ -405,16 +398,11 @@ def extract_live_score_and_time(ev):
         if start_ts:
             now = time.time()
             elapsed_mins = (now - start_ts) / 60.0
-            if elapsed_mins < 0:
-                minute = 0
-            elif elapsed_mins < 47:
-                minute = int(elapsed_mins)
-            elif elapsed_mins < 62:
-                minute = "HT"
-            elif elapsed_mins < 107:
-                minute = int(elapsed_mins) - 15
-            else:
-                minute = "FT"
+            if elapsed_mins < 0: minute = 0
+            elif elapsed_mins < 47: minute = int(elapsed_mins)
+            elif elapsed_mins < 62: minute = "HT"
+            elif elapsed_mins < 107: minute = int(elapsed_mins) - 15
+            else: minute = "FT"
 
     return score, minute
 
@@ -643,7 +631,6 @@ async def main():
         t2_old = old_m.get("away", "")
         league_old = old_m.get("league", "")
         
-        # Если старый матч не проходит новый белый список — удаляем
         if not is_valid_match(t1_old, t2_old, league_old):
             print(f"   🗑 Удаляю мусорный LIVE из базы: {old_m.get('title')} | {league_old}")
             continue
@@ -685,12 +672,24 @@ async def main():
         al = find_logo(logo_cache, t2, hint)
 
         p1 = px = p2 = None
+        markets_data = {}
+
         for out in ev.get("outcomes", []):
-            gn = out.get("groupName", ""); sn = out.get("shortName", "")
+            gn = out.get("groupName", "Другое").strip()
+            sn = out.get("shortName", "").strip()
+            prob = out.get("probability")
+            
+            if prob is None or not sn: continue
+            
+            if gn not in markets_data:
+                markets_data[gn] = []
+            markets_data[gn].append({"name": sn, "odds": prob})
+
+            # Заполняем основные П1 Х П2 для главного экрана
             if "Исход" in gn or "Результат" in gn:
-                if sn in ["П1", "1"]: p1 = out.get("probability")
-                elif sn in ["X", "Х", "Ничья"]: px = out.get("probability")
-                elif sn in ["П2", "2"]: p2 = out.get("probability")
+                if sn in ["П1", "1"]: p1 = prob
+                elif sn in ["X", "Х", "Ничья"]: px = prob
+                elif sn in ["П2", "2"]: p2 = prob
 
         score = "VS"; status_str = status_type
         if status_type == "LIVE":
@@ -708,7 +707,8 @@ async def main():
             "homeLogo": hl, "awayLogo": al, "league": league_name,
             "status": time_display, "score": score,
             "start_time": ev.get("startDateTime"),
-            "odds": {"1": p1, "X": px, "2": p2}
+            "odds": {"1": p1, "X": px, "2": p2},
+            "markets": markets_data
         }
 
     preserved = 0
