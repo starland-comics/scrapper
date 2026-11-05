@@ -13,6 +13,7 @@ from rapidfuzz import fuzz
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
+OLIMP_RESULTS_URL = "https://www.olimp.bet/api/v4/0/results/sports-with-competitions-with-events"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
@@ -313,7 +314,6 @@ def fetch_olimp_matches(url):
         except Exception: time.sleep(1)
     return []
 
-# ================= АГРЕССИВНЫЙ ПАРСЕР МИНУТЫ =================
 def _try_extract_minute(val):
     if val is None or isinstance(val, bool): return None
     if isinstance(val, (int, float)):
@@ -375,7 +375,6 @@ def extract_live_score_and_time(ev):
                 if any(x in vl for x in ["2h", "2nd", "второй тайм"]): minute = "2H"; break
 
     return score, minute
-# ============================================================
 
 def build_status(status_type, minute):
     if status_type != "LIVE": return status_type
@@ -393,6 +392,31 @@ def find_logo(cache, team, hint):
         if "|" in k and k.split("|")[0] == team and val:
             return val
     return ""
+
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ РЕЗУЛЬТАТОВ ИЗ OLIMPBET ---
+async def fetch_olimp_results():
+    print("📥 Загружаю результаты из Olimpbet...")
+    results_dict = {}
+    try:
+        data = fetch_olimp_matches(OLIMP_RESULTS_URL)
+        for sg in data:
+            sport = sg.get("payload", {}).get("sport", {})
+            if str(sport.get("id")) != "1": continue
+            comps = sg.get("payload", {}).get("competitionsWithEvents", [])
+            for comp in comps:
+                for ev in comp.get("events", []):
+                    ev_id = ev.get("id")
+                    if not ev_id: continue
+                    
+                    sc = ev.get("score")
+                    if isinstance(sc, dict):
+                        s1 = sc.get("team1") or sc.get("home")
+                        s2 = sc.get("team2") or sc.get("away")
+                        if s1 is not None and s2 is not None:
+                            results_dict[f"olimp_{ev_id}"] = {"score1": int(s1), "score2": int(s2)}
+    except Exception as e:
+        print(f"   ⚠️ Ошибка Olimpbet results: {e}")
+    return results_dict
 
 async def fetch_finished_matches(old_matches, new_match_ids):
     print("📥 Ищу результаты завершенных матчей...")
@@ -414,42 +438,53 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         print("✅ Нет новых завершенных матчей (>3ч).")
         return
 
-    dates = {
-        time.strftime("%Y-%m-%d", time.localtime(now)),
-        time.strftime("%Y-%m-%d", time.localtime(now - 86400)),
-    }
-    tsdb_results = {}
-    async with httpx.AsyncClient() as client:
-        for d in dates:
-            try:
-                r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=15)
-                if r.status_code == 200:
-                    for ev in (r.json() or {}).get("events") or []:
-                        h = _normalize(ev.get("strHomeTeam", ""))
-                        a = _normalize(ev.get("strAwayTeam", ""))
-                        s1 = ev.get("intHomeScore"); s2 = ev.get("intAwayScore")
-                        if s1 is not None and s2 is not None:
-                            tsdb_results[f"{h}_{a}"] = {"score1": int(s1), "score2": int(s2)}
-            except Exception as e:
-                print(f"   ⚠️ Ошибка TSDB за {d}: {e}")
-
+    # Сначала берем результаты напрямую из Олимбета
+    olimp_results = await fetch_olimp_results()
     for mid in missing_ids:
-        match = old_matches[mid]
-        h = _normalize(match.get("home", ""))
-        a = _normalize(match.get("away", ""))
+        if mid in olimp_results:
+            finished_dict[mid] = olimp_results[mid]
+            print(f"   ✅ Счёт из Olimpbet для {mid}: {olimp_results[mid]}")
 
-        if f"{h}_{a}" in tsdb_results:
-            finished_dict[mid] = tsdb_results[f"{h}_{a}"]
-        elif f"{a}_{h}" in tsdb_results:
-            res = tsdb_results[f"{a}_{h}"]
-            finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
-        else:
-            st = match.get("start_time")
-            if st and now > st + 5 * 3600:
-                print(f"   💀 Void (>5ч без результата): {match.get('title')}")
-                finished_dict[mid] = {"void": True}
+    # Для остальных пробуем TheSportsDB
+    missing_after_olimp = missing_ids - set(finished_dict.keys())
+    
+    if missing_after_olimp:
+        dates = {
+            time.strftime("%Y-%m-%d", time.localtime(now)),
+            time.strftime("%Y-%m-%d", time.localtime(now - 86400)),
+        }
+        tsdb_results = {}
+        async with httpx.AsyncClient() as client:
+            for d in dates:
+                try:
+                    r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=15)
+                    if r.status_code == 200:
+                        for ev in (r.json() or {}).get("events") or []:
+                            h = _normalize(ev.get("strHomeTeam", ""))
+                            a = _normalize(ev.get("strAwayTeam", ""))
+                            s1 = ev.get("intHomeScore"); s2 = ev.get("intAwayScore")
+                            if s1 is not None and s2 is not None:
+                                tsdb_results[f"{h}_{a}"] = {"score1": int(s1), "score2": int(s2)}
+                except Exception as e:
+                    print(f"   ⚠️ Ошибка TSDB за {d}: {e}")
+
+        for mid in missing_after_olimp:
+            match = old_matches[mid]
+            h = _normalize(match.get("home", ""))
+            a = _normalize(match.get("away", ""))
+
+            if f"{h}_{a}" in tsdb_results:
+                finished_dict[mid] = tsdb_results[f"{h}_{a}"]
+            elif f"{a}_{h}" in tsdb_results:
+                res = tsdb_results[f"{a}_{h}"]
+                finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
             else:
-                print(f"   ⏳ Ждём результат: {match.get('title')}")
+                st = match.get("start_time")
+                if st and now > st + 5 * 3600:
+                    print(f"   💀 Void (>5ч без результата): {match.get('title')}")
+                    finished_dict[mid] = {"void": True}
+                else:
+                    print(f"   ⏳ Ждём результат: {match.get('title')}")
 
     if finished_dict:
         print(f"✅ Обработано {len(finished_dict)} матчей.")
@@ -524,7 +559,6 @@ async def main():
     line_count = parse(line_data, "Скоро")
     print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
 
-    # 1) Собираем missing из свежей выдачи
     missing = set()
     for ev, _, league_name in all_matches:
         for t in (ev.get("team1Name"), ev.get("team2Name")):
@@ -534,7 +568,6 @@ async def main():
             force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
             if force: missing.add((t, league_name, force))
 
-    # 2) ДОБАВЛЯЕМ команды "зависших" LIVE-матчей в поиск логотипов
     stale_live_matches = []
     for mid, old_m in old_matches_dict.items():
         if not isinstance(old_m, dict): continue
@@ -551,7 +584,6 @@ async def main():
     if stale_live_matches:
         print(f"🔁 Найдено {len(stale_live_matches)} 'зависших' LIVE-матчей — обновляю логотипы")
 
-    # 3) Поиск логотипов
     if missing:
         print(f"🔎 Поиск логотипов для {len(missing)} пар...")
         teams_to_search = list({t for t, _, _ in missing})
@@ -566,7 +598,6 @@ async def main():
     if FALLBACK_TEAMS:
         print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
-    # 4) Собираем свежие матчи
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
         ev_id = ev.get("id")
@@ -605,10 +636,8 @@ async def main():
             "odds": {"1": p1, "X": px, "2": p2}
         }
 
-    # 5) Preservation: переносим "зависшие" LIVE-матчи, но с ОБНОВЛЁННЫМИ логотипами
     preserved = 0
     for mid, old_m in stale_live_matches:
-        # Обновляем лого из свежего кэша
         old_hint = league_to_country(old_m.get("league", "")) or ""
         new_h = find_logo(logo_cache, old_m.get("home", ""), old_hint)
         new_a = find_logo(logo_cache, old_m.get("away", ""), old_hint)
@@ -623,7 +652,6 @@ async def main():
                 print(f"♻️ Сохранён LIVE (не в выдаче): {old_m.get('title')} | logo={'✅' if new_h else '❌'}")
             continue
 
-        # Матч есть в выдаче — сохраняем счёт/минуту из базы, но берём свежие лого
         new_m = matches_dict[mid]
         if old_m.get("score") and old_m.get("score") != "VS":
             new_m["score"] = old_m["score"]
