@@ -453,15 +453,23 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         print("✅ Нет новых завершенных матчей (>3ч).")
         return
 
+    print(f"🔍 Проверяю {len(missing_ids)} матчей на результат:")
+    for mid in missing_ids:
+        m = old_matches[mid]
+        st = m.get("start_time", 0)
+        age_h = round((now - st) / 3600, 1) if st else "?"
+        print(f"   • {m.get('title')} ({mid}) — прошло {age_h}ч")
+
     olimp_results = await fetch_olimp_results()
     for mid in missing_ids:
         if mid in olimp_results:
             finished_dict[mid] = olimp_results[mid]
-            print(f"   ✅ Счёт из Olimpbet для {mid}: {olimp_results[mid]}")
+            print(f"   ✅ [Olimpbet] {mid}: {olimp_results[mid]['score1']}:{olimp_results[mid]['score2']}")
 
     missing_after_olimp = missing_ids - set(finished_dict.keys())
-    
+
     if missing_after_olimp:
+        print(f"🔍 Не нашёл в Olimpbet для {len(missing_after_olimp)} матчей, пробую TheSportsDB...")
         dates = {
             time.strftime("%Y-%m-%d", time.localtime(now)),
             time.strftime("%Y-%m-%d", time.localtime(now - 86400)),
@@ -488,19 +496,21 @@ async def fetch_finished_matches(old_matches, new_match_ids):
 
             if f"{h}_{a}" in tsdb_results:
                 finished_dict[mid] = tsdb_results[f"{h}_{a}"]
+                print(f"   ✅ [TSDB] {match.get('title')}: {tsdb_results[f'{h}_{a}']['score1']}:{tsdb_results[f'{h}_{a}']['score2']}")
             elif f"{a}_{h}" in tsdb_results:
                 res = tsdb_results[f"{a}_{h}"]
                 finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
+                print(f"   ✅ [TSDB] {match.get('title')}: {res['score2']}:{res['score1']}")
             else:
                 st = match.get("start_time")
                 if st and now > st + 5 * 3600:
-                    print(f"   💀 Void (>5ч без результата): {match.get('title')}")
+                    print(f"   💀 [VOID] {match.get('title')} — прошло >5ч, ставка вернётся")
                     finished_dict[mid] = {"void": True}
                 else:
-                    print(f"   ⏳ Ждём результат: {match.get('title')}")
+                    print(f"   ⏳ [ЖДЁМ] {match.get('title')} — матч ещё может идти или обновляется")
 
     if finished_dict:
-        print(f"✅ Обработано {len(finished_dict)} матчей.")
+        print(f"✅ Итого обработано {len(finished_dict)} матчей. Записываю в finished_matches.")
         async with httpx.AsyncClient() as client:
             await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
 
