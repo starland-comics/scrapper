@@ -438,7 +438,7 @@ def fetch_full_odds_via_oddsharvester():
     output_file = Path("/tmp/oddsharvester_output.json")
     
     # Собираем рынки: 1x2, btts, over/under, asian handicap, double chance, draw no bet
-    markets = "1x2,btts,over_under,asian_handicap,double_chance,draw_no_bet"
+    markets = "1x2,btts,over_under,asian_handicap,double_chance,dnb"
     
     cmd = [
         "oddsharvester", "live",
