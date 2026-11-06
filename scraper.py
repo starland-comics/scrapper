@@ -15,7 +15,7 @@ FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
 OLIMP_RESULTS_URL = "https://www.olimp.bet/api/v4/0/results/sports-with-competitions-with-events"
-FLASHSCORE_SEARCH = "https://www.flashscore.com/search/?q="
+ODDSPORTAL_BASE = "https://www.oddsportal.com"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
@@ -429,132 +429,120 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-# ============ FLASHSCORE ПАРСЕР ============
+# ============ ODDSportal ПАРСЕР ============
 
-async def search_flashscore_match(page, home_en, away_en):
-    """Ищет URL матча на Flashscore через поиск. Возвращает URL или None."""
+async def search_oddsportal_match(page, home_en, away_en):
+    """Ищет URL матча на Oddsportal через встроенный поиск."""
     query = f"{home_en} {away_en}"
-    search_url = f"https://www.flashscore.com/search/?q={urllib.parse.quote(query)}"
+    search_url = f"{ODDSPORTAL_BASE}/search/?q={urllib.parse.quote(query)}"
     
     try:
         await page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
         await asyncio.sleep(3)
         
-        # Ищем первую ссылку на матч (класс .search__event или ссылка с /match/)
         links = await page.eval_on_selector_all(
-            "a[href*='/match/']",
-            "els => els.map(e => e.href).filter(h => h)"
+            "a[href*='/football/'], a[href*='/match/']",
+            "els => els.map(e => e.href).filter(h => h && (h.includes('/football/') || h.includes('/match/')))"
         )
         
         if not links:
-            # Попробуем через поиск по одной команде
-            query2 = home_en
-            search_url2 = f"https://www.flashscore.com/search/?q={urllib.parse.quote(query2)}"
+            search_url2 = f"{ODDSPORTAL_BASE}/search/?q={urllib.parse.quote(home_en)}"
             await page.goto(search_url2, wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(3)
             links = await page.eval_on_selector_all(
-                "a[href*='/match/']",
-                "els => els.map(e => e.href).filter(h => h)"
+                "a[href*='/football/'], a[href*='/match/']",
+                "els => els.map(e => e.href).filter(h => h && (h.includes('/football/') || h.includes('/match/')))"
             )
         
-        # Возвращаем первый, у которого дома и гость в URL или близко
         for link in links[:5]:
             return link
         return None
     except Exception as e:
-        print(f"      ⚠️ Flashscore search error: {e}")
+        print(f"      ⚠️ Oddsportal search error: {e}")
         return None
 
 
-async def parse_flashscore_odds(page):
-    """Парсит все кэфы со страницы Flashscore."""
+async def parse_oddsportal_odds(page):
+    """Парсит кэфы со страницы Oddsportal."""
     markets = {}
     
     try:
-        # Ждём загрузки кэфов (1X2 — вкладка по умолчанию)
-        await page.wait_for_selector("div[class*='oddsCell__odd'], div[class*='ui-table__row']", timeout=10000)
+        await page.wait_for_selector("div[class*='border-b'], table[class*='table-main']", timeout=10000)
         await asyncio.sleep(2)
         
-        # 1X2 (базовые)
-        odds_1x2 = await page.eval_on_selector_all(
-            "div[class*='oddsCell']",
-            """els => els.map(el => ({
-                team: el.querySelector("[class*='team']")?.innerText || '',
-                odd: el.querySelector("[class*='odd']")?.innerText || ''
-            })).filter(o => o.team && o.odd)"""
+        # 1X2
+        rows = await page.eval_on_selector_all(
+            "div[class*='border-b']",
+            """els => els.map(el => {
+                const name = el.querySelector("[class*='text-']")?.innerText || '';
+                const odds = Array.from(el.querySelectorAll("[class*='odds']")).map(o => o.innerText);
+                return { name, odds };
+            }).filter(r => r.odds.length > 0)"""
         )
         
-        if odds_1x2:
+        if rows:
             markets["Исход"] = []
-            for o in odds_1x2[:3]:
-                name = o["team"].strip()
-                try: odd = float(o["odd"].replace(",", "."))
-                except: continue
-                if odd <= 1.0: continue
-                if name in ["1", "П1", "Home"]: name = "П1"
-                elif name in ["X", "Х", "Draw"]: name = "Х"
-                elif name in ["2", "П2", "Away"]: name = "П2"
-                markets["Исход"].append({"name": name, "odds": odd})
+            for r in rows[:1]:
+                for odd_text in r["odds"][:3]:
+                    try: odd = float(odd_text.replace(",", "."))
+                    except: continue
+                    if odd <= 1.0: continue
+                    idx = len(markets["Исход"])
+                    name = ["П1", "Х", "П2"][idx] if idx < 3 else f"Исход {idx+1}"
+                    markets["Исход"].append({"name": name, "odds": odd})
         
-        # Кликаем по вкладкам с рынками
+        # Тоталы и форы: ищем вкладки
         tabs = await page.eval_on_selector_all(
-            "div[class*='tabs__tab'], a[class*='tabs__tab']",
-            "els => els.map(e => e.innerText.trim())"
+            "a[class*='tab'], div[class*='tab']",
+            "els => els.map(e => ({ text: e.innerText.trim(), href: e.getAttribute('href') || '' }))"
         )
         
-        tabs_to_open = {
-            "Тоталы": "Total",
-            "Total": "Тотал",
-            "Форы": "Handicap",
-            "Handicap": "Фора",
-            "Обе забьют": "Both teams",
-            "Both teams": "Обе забьют",
-        }
-        
-        for tab_text in tabs:
-            tab_lower = tab_text.lower()
+        for tab in tabs:
+            tab_text = (tab.get("text") or "").lower()
             group_name = None
-            if "тотал" in tab_lower or "total" in tab_lower:
+            if "over/under" in tab_text or "тотал" in tab_text:
                 group_name = "Тотал"
-            elif "фора" in tab_lower or "handicap" in tab_lower:
+            elif "handicap" in tab_text or "фора" in tab_text:
                 group_name = "Фора"
-            elif "обе забьют" in tab_lower or "both teams" in tab_lower:
+            elif "btts" in tab_text or "both teams" in tab_text or "обе забьют" in tab_text:
                 group_name = "Обе забьют"
             
             if not group_name or group_name in markets: continue
             
             try:
-                await page.click(f"text={tab_text}", timeout=5000)
+                await page.click(f"text={tab['text']}", timeout=5000)
                 await asyncio.sleep(2)
                 
                 rows = await page.eval_on_selector_all(
-                    "div[class*='ui-table__row'], div[class*='oddsCell']",
-                    """els => els.map(el => ({
-                        name: el.querySelector("[class*='team'], [class*='name']")?.innerText || '',
-                        odd: el.querySelector("[class*='odd']")?.innerText || ''
-                    })).filter(r => r.name && r.odd)"""
+                    "div[class*='border-b']",
+                    """els => els.map(el => {
+                        const name = el.querySelector("[class*='text-']")?.innerText || '';
+                        const odds = Array.from(el.querySelectorAll("[class*='odds']")).map(o => o.innerText);
+                        return { name, odds };
+                    }).filter(r => r.odds.length > 0)"""
                 )
                 
                 if rows:
                     markets[group_name] = []
                     for r in rows[:20]:
-                        try: odd = float(r["odd"].replace(",", "."))
-                        except: continue
-                        if odd <= 1.0: continue
-                        name = r["name"].strip()
-                        if not name: continue
-                        markets[group_name].append({"name": name, "odds": odd})
+                        for odd_text in r["odds"][:2]:
+                            try: odd = float(odd_text.replace(",", "."))
+                            except: continue
+                            if odd <= 1.0: continue
+                            name = r["name"].strip()
+                            if not name: continue
+                            markets[group_name].append({"name": name, "odds": odd})
             except Exception:
                 pass
         
         return markets
     except Exception as e:
-        print(f"      ⚠️ Flashscore parse error: {e}")
+        print(f"      ⚠️ Oddsportal parse error: {e}")
         return markets
 
 
-async def fetch_flashscore_full(unique_matches, name_en_map):
-    """Открывает Flashscore, ищет каждый live-матч и парсит кэфы."""
+async def fetch_oddsportal_full(unique_matches, name_en_map):
+    """Открывает Oddsportal, ищет каждый live-матч и парсит кэфы."""
     result = {}
     
     async with async_playwright() as p:
@@ -567,7 +555,7 @@ async def fetch_flashscore_full(unique_matches, name_en_map):
         page = await context.new_page()
         
         live_items = [(ev_id, data) for ev_id, data in unique_matches.items() if data[1] == "LIVE"]
-        print(f"   📊 Flashscore: обрабатываю {len(live_items)} live-матчей")
+        print(f"   📊 Oddsportal: обрабатываю {len(live_items)} live-матчей")
         
         for idx, (ev_id, (ev, status, league)) in enumerate(live_items, 1):
             t1_ru = ev.get("team1Name", "")
@@ -577,9 +565,9 @@ async def fetch_flashscore_full(unique_matches, name_en_map):
             
             print(f"   [{idx}/{len(live_items)}] {t1_ru} - {t2_ru}")
             
-            match_url = await search_flashscore_match(page, t1_en, t2_en)
+            match_url = await search_oddsportal_match(page, t1_en, t2_en)
             if not match_url:
-                print(f"      ❌ Не найден на Flashscore")
+                print(f"      ❌ Не найден на Oddsportal")
                 continue
             
             print(f"      🔗 {match_url}")
@@ -587,7 +575,7 @@ async def fetch_flashscore_full(unique_matches, name_en_map):
             try:
                 await page.goto(match_url, wait_until="domcontentloaded", timeout=25000)
                 await asyncio.sleep(3)
-                odds = await parse_flashscore_odds(page)
+                odds = await parse_oddsportal_odds(page)
                 
                 if odds:
                     result[ev_id] = odds
@@ -728,7 +716,7 @@ async def firebase_put(path, data):
 # ============ MAIN ============
 
 async def main():
-    print("🔄 [Scraper] Запуск (Olimpbet + Flashscore)...")
+    print("🔄 [Scraper] Запуск (Olimpbet + Oddsportal)...")
 
     old_matches_dict = await firebase_get("matches") or {}
     if not isinstance(old_matches_dict, dict): old_matches_dict = {}
@@ -787,10 +775,10 @@ async def main():
     print(f"🔤 Перевожу {len(teams_ru)} названий команд...")
     name_en_map = batch_translate_ru_to_en(list(teams_ru))
 
-    # Flashscore: полная роспись для live-матчей
-    print("🌐 Запускаю Flashscore парсинг...")
-    fs_odds_map = await fetch_flashscore_full(unique_matches, name_en_map)
-    print(f"✅ Получено полных росписей с Flashscore: {len(fs_odds_map)}")
+    # Oddsportal: полная роспись для live-матчей
+    print("🌐 Запускаю Oddsportal парсинг...")
+    op_odds_map = await fetch_oddsportal_full(unique_matches, name_en_map)
+    print(f"✅ Получено полных росписей с Oddsportal: {len(op_odds_map)}")
 
     # Логотипы
     missing = set()
@@ -839,13 +827,13 @@ async def main():
                 elif sn in ["X", "Х"]: px = prob
                 elif sn in ["П2", "2"]: p2 = prob
 
-        # Полная роспись из Flashscore
-        if ev_id in fs_odds_map:
-            fs_markets = fs_odds_map[ev_id]
-            for gn, outs in fs_markets.items():
+        # Полная роспись из Oddsportal
+        if ev_id in op_odds_map:
+            op_markets = op_odds_map[ev_id]
+            for gn, outs in op_markets.items():
                 if outs: markets_data[gn] = outs
-            if "Исход" in fs_markets:
-                for o in fs_markets["Исход"]:
+            if "Исход" in op_markets:
+                for o in op_markets["Исход"]:
                     if o["name"] == "П1": p1 = o["odds"]
                     elif o["name"] == "Х": px = o["odds"]
                     elif o["name"] == "П2": p2 = o["odds"]
@@ -874,7 +862,7 @@ async def main():
             "markets": markets_data
         }
 
-    print(f"✅ С полной росписью (Flashscore): {with_full}")
+    print(f"✅ С полной росписью (Oddsportal): {with_full}")
     print(f"⚠️  Только базовые П1/Х/П2 (Olimpbet): {with_base}")
 
     if matches_dict:
