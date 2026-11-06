@@ -11,11 +11,17 @@ from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
-OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events"
-OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
-OLIMP_RESULTS_URL = "https://www.olimp.bet/api/v4/0/results/sports-with-competitions-with-events"
+PINNACLE_BASE_URL = "https://guest.api.arcadia.pinnacle.com/0.1"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
+
+PINNACLE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Origin": "https://www.pinnacle.com",
+    "Referer": "https://www.pinnacle.com/",
+    "X-API-Key": "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R"
+}
 
 FOTMOB_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -151,13 +157,8 @@ def _normalize(s):
 
 def is_valid_match(team1, team2, league):
     text = f"{team1} {team2} {league}".lower()
-    
-    if any(word in text for word in BLACKLIST_WORDS):
-        return False
-        
-    if not any(allowed in league.lower() for allowed in ALLOWED_LEAGUES):
-        return False
-        
+    if any(word in text for word in BLACKLIST_WORDS): return False
+    if not any(allowed in league.lower() for allowed in ALLOWED_LEAGUES): return False
     return True
 
 def league_to_country(comp_name):
@@ -195,8 +196,7 @@ def _decode_key(k):
         try:
             padding = "=" * (-len(k[4:]) % 4)
             return base64.urlsafe_b64decode(k[4:] + padding).decode("utf-8")
-        except Exception:
-            return k
+        except Exception: return k
     return k
 
 def _cache_to_fb(cache): return {_encode_key(k): v for k, v in cache.items() if k and v}
@@ -324,93 +324,82 @@ async def search_all_logos(teams_with_league, cache, name_en_map):
                 LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team)
     await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
-def fetch_olimp_matches(url):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json"}
-    for _ in range(2):
-        try:
-            r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=120)
-            if r.status_code == 200: return r.json()
-        except Exception: time.sleep(1)
-    return []
-
-def _try_extract_minute(val):
-    if val is None or isinstance(val, bool): return None
-    if isinstance(val, (int, float)):
-        return int(val) if 0 <= val <= 130 else None
-    if isinstance(val, str):
-        s = val.strip(); sl = s.lower()
-        if any(x in sl for x in ["перерыв", "halftime", "half time", "ht"]): return "HT"
-        if any(x in sl for x in ["завершен", "finished", "ended", "full time", "ft"]): return "FT"
-        if any(x in sl for x in ["1st half", "1h", "первый тайм"]): return "1H"
-        if any(x in sl for x in ["2nd half", "2h", "второй тайм"]): return "2H"
-        m = re.search(r"(\d{1,3})", s)
-        if m:
-            n = int(m.group(1))
-            if 0 <= n <= 130: return n
+def american_to_decimal(american_odds):
+    try:
+        am = float(american_odds)
+        if am >= 100:
+            return round((am / 100) + 1, 2)
+        elif am <= -100:
+            return round((100 / abs(am)) + 1, 2)
         return None
-    if isinstance(val, dict):
-        for sub in ["minute", "current", "elapsed", "value", "display", "text", "seconds", "currentMinute"]:
-            if sub in val:
-                r = _try_extract_minute(val[sub])
-                if r is not None: return r
+    except Exception:
         return None
-    return None
 
-def extract_live_score_and_time(ev):
-    score = None; minute = None
-    sc = ev.get("score")
-    if isinstance(sc, dict):
-        s1 = sc.get("team1") or sc.get("home") or sc.get("score1")
-        s2 = sc.get("team2") or sc.get("away") or sc.get("score2")
-        if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
-    elif isinstance(sc, str) and ":" in sc: score = sc
-    if not score:
-        s1 = ev.get("score1") or ev.get("homeScore") or ev.get("team1Score")
-        s2 = ev.get("score2") or ev.get("awayScore") or ev.get("team2Score")
-        if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
+def parse_pinnacle_odds(markets, home_team, away_team):
+    markets_data = {}
+    if not markets or not isinstance(markets, list): return markets_data
 
-    for field in ["minute", "currentMinute", "liveTime", "liveTimer", "elapsed",
-                  "time", "timer", "matchTime", "gameTime", "periodTime",
-                  "currentTime", "timeLive", "liveMinute", "scoreTime", "statusTime",
-                  "gameMinute", "elapsedTime", "timePlayed", "minutes", "minutePlayed"]:
-        if field in ev:
-            r = _try_extract_minute(ev[field])
-            if r is not None: minute = r; break
+    for market in markets:
+        key = market.get("key", "")
+        market_type = market.get("type", "")
+        period = market.get("period", 0)
+        
+        if period != 0: continue # Берем только основной матч
 
-    if minute is None:
-        for nk in ["score", "status", "live", "progress", "timer", "time"]:
-            nested = ev.get(nk)
-            if isinstance(nested, dict):
-                r = _try_extract_minute(nested)
-                if r is not None: minute = r; break
+        outcomes = market.get("prices", [])
+        if not outcomes: continue
 
-    if minute is None:
-        for pf in ["period", "timeStatus", "status", "liveStatus", "matchStatus", "half", "timePeriod"]:
-            v = ev.get(pf)
-            if isinstance(v, str):
-                vl = v.lower()
-                if any(x in vl for x in ["ht", "halftime", "перерыв", "half"]): minute = "HT"; break
-                if any(x in vl for x in ["1h", "1st", "первый тайм"]): minute = "1H"; break
-                if any(x in vl for x in ["2h", "2nd", "второй тайм"]): minute = "2H"; break
+        if market_type == "moneyline":
+            group_name = "Исход"
+            for out in outcomes:
+                designation = out.get("designation", "")
+                price = american_to_decimal(out.get("price"))
+                if price is None: continue
+                
+                name = "П1" if designation == "home" else ("Х" if designation == "draw" else "П2")
+                if group_name not in markets_data: markets_data[group_name] = []
+                markets_data[group_name].append({"name": name, "odds": price})
 
-    if minute is None:
-        start_ts = ev.get("startDateTime")
-        if start_ts:
-            now = time.time()
-            elapsed_mins = (now - start_ts) / 60.0
-            if elapsed_mins < 0: minute = 0
-            elif elapsed_mins < 47: minute = int(elapsed_mins)
-            elif elapsed_mins < 62: minute = "HT"
-            elif elapsed_mins < 107: minute = int(elapsed_mins) - 15
-            else: minute = "FT"
+        elif market_type == "spread":
+            group_name = "Фора"
+            for out in outcomes:
+                designation = out.get("designation", "")
+                price = american_to_decimal(out.get("price"))
+                points = out.get("points")
+                if price is None or points is None: continue
+                
+                team = home_team if designation == "home" else away_team
+                name = f"Ф1 {points:+g}" if designation == "home" else f"Ф2 {points:+g}"
+                if group_name not in markets_data: markets_data[group_name] = []
+                markets_data[group_name].append({"name": name, "odds": price})
 
-    return score, minute
+        elif market_type == "total":
+            group_name = "Тотал"
+            for out in outcomes:
+                designation = out.get("designation", "")
+                price = american_to_decimal(out.get("price"))
+                points = out.get("points")
+                if price is None or points is None: continue
+                
+                name = f"ТБ {points}" if designation == "over" else f"ТМ {points}"
+                if group_name not in markets_data: markets_data[group_name] = []
+                markets_data[group_name].append({"name": name, "odds": price})
 
-def build_status(status_type, minute):
-    if status_type != "LIVE": return status_type
-    if minute is None: return "LIVE"
-    if minute in ("HT", "FT", "1H", "2H"): return f"LIVE · {minute}"
-    return f"LIVE {minute}'"
+        elif market_type == "team_total":
+            for out in outcomes:
+                designation = out.get("designation", "")
+                price = american_to_decimal(out.get("price"))
+                points = out.get("points")
+                if price is None or points is None: continue
+                
+                side = out.get("side", "") # home/away
+                group_name = f"Тотал {'1' if side == 'home' else '2'}"
+                name = f"ТБ {points}" if designation == "over" else f"ТМ {points}"
+                
+                if group_name not in markets_data: markets_data[group_name] = []
+                markets_data[group_name].append({"name": name, "odds": price})
+
+    return markets_data
 
 def find_logo(cache, team, hint):
     if not team: return ""
@@ -423,126 +412,60 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-async def fetch_olimp_results():
-    print("📥 Загружаю результаты из Olimpbet...")
-    results_dict = {}
+async def fetch_pinnacle_data(endpoint):
+    url = f"{PINNACLE_BASE_URL}{endpoint}"
     try:
-        data = fetch_olimp_matches(OLIMP_RESULTS_URL)
-        for sg in data:
-            sport = sg.get("payload", {}).get("sport", {})
-            if str(sport.get("id")) != "1": continue
-            comps = sg.get("payload", {}).get("competitionsWithEvents", [])
-            for comp in comps:
-                for ev in comp.get("events", []):
-                    ev_id = ev.get("id")
-                    if not ev_id: continue
-                    
-                    sc = ev.get("score")
-                    if isinstance(sc, dict):
-                        s1 = sc.get("team1") or sc.get("home")
-                        s2 = sc.get("team2") or sc.get("away")
-                        if s1 is not None and s2 is not None:
-                            results_dict[f"olimp_{ev_id}"] = {"score1": int(s1), "score2": int(s2)}
-    except Exception as e:
-        print(f"   ⚠️ Ошибка Olimpbet results: {e}")
-    return results_dict
-
-async def fetch_finished_matches(old_matches, new_match_ids):
-    print("📥 Ищу результаты завершенных матчей...")
-    finished_known = await firebase_get("finished_matches") or {}
-    if not isinstance(finished_known, dict): finished_known = {}
-
-    finished_dict = {}
-    now = time.time()
-    missing_ids = set()
-    for mid, match in old_matches.items():
-        if not isinstance(match, dict): continue
-        if mid in finished_known: continue
-        st = match.get("start_time")
-        is_old = st and (now > st + 7800)
-        if (mid not in new_match_ids and is_old) or (mid in new_match_ids and is_old):
-            missing_ids.add(mid)
-
-    if not missing_ids:
-        print("✅ Нет новых завершенных матчей (>2ч).")
-        return
-
-    print(f"🔍 Проверяю {len(missing_ids)} матчей на результат:")
-    for mid in missing_ids:
-        m = old_matches[mid]
-        st = m.get("start_time", 0)
-        age_h = round((now - st) / 3600, 1) if st else "?"
-        print(f"   • {m.get('title')} ({mid}) — прошло {age_h}ч")
-
-    olimp_results = await fetch_olimp_results()
-    for mid in missing_ids:
-        if mid in olimp_results:
-            finished_dict[mid] = olimp_results[mid]
-            print(f"   ✅ [Olimpbet] {mid}: {olimp_results[mid]['score1']}:{olimp_results[mid]['score2']}")
-
-    missing_after_olimp = missing_ids - set(finished_dict.keys())
-
-    if missing_after_olimp:
-        print(f"🔍 Не нашёл в Olimpbet для {len(missing_after_olimp)} матчей, пробую TheSportsDB...")
-        dates = {
-            time.strftime("%Y-%m-%d", time.localtime(now)),
-            time.strftime("%Y-%m-%d", time.localtime(now - 86400)),
-        }
-        tsdb_results = {}
         async with httpx.AsyncClient() as client:
-            for d in dates:
-                try:
-                    r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=15)
-                    if r.status_code == 200:
-                        for ev in (r.json() or {}).get("events") or []:
-                            h = _normalize(ev.get("strHomeTeam", ""))
-                            a = _normalize(ev.get("strAwayTeam", ""))
-                            s1 = ev.get("intHomeScore"); s2 = ev.get("intAwayScore")
-                            if s1 is not None and s2 is not None:
-                                tsdb_results[f"{h}_{a}"] = {"score1": int(s1), "score2": int(s2)}
-                except Exception as e:
-                    print(f"   ⚠️ Ошибка TSDB за {d}: {e}")
-
-        for mid in missing_after_olimp:
-            match = old_matches[mid]
-            h = _normalize(match.get("home", ""))
-            a = _normalize(match.get("away", ""))
-
-            if f"{h}_{a}" in tsdb_results:
-                finished_dict[mid] = tsdb_results[f"{h}_{a}"]
-                print(f"   ✅ [TSDB] {match.get('title')}: {tsdb_results[f'{h}_{a}']['score1']}:{tsdb_results[f'{h}_{a}']['score2']}")
-                continue
-            elif f"{a}_{h}" in tsdb_results:
-                res = tsdb_results[f"{a}_{h}"]
-                finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
-                print(f"   ✅ [TSDB] {match.get('title')}: {res['score2']}:{res['score1']}")
-                continue
-
-            existing_finished = await firebase_get(f"finished_matches/{mid}")
-            if isinstance(existing_finished, dict) and "score1" in existing_finished and existing_finished.get("source") == "live_last":
-                print(f"   🎯 [LIVE_LAST] {match.get('title')}: {existing_finished['score1']}:{existing_finished['score2']} (уже сохранено)")
-                continue
-
-            match_score = match.get("score", "")
-            if ":" in match_score:
-                try:
-                    s1, s2 = [int(x.strip()) for x in match_score.split(":")]
-                    print(f"   🎯 [МАТЧ] {match.get('title')}: {s1}:{s2} (из поля score)")
-                    finished_dict[mid] = {"score1": s1, "score2": s2, "source": "match_score"}
-                    continue
-                except: pass
-
-            st = match.get("start_time")
-            if st and now > st + 9000:
-                print(f"   💀 [VOID] {match.get('title')} — прошло >2.5ч, счёта нет, возврат")
-                finished_dict[mid] = {"void": True}
+            r = await client.get(url, headers=PINNACLE_HEADERS, timeout=30)
+            if r.status_code == 200:
+                return r.json()
+            elif r.status_code == 429:
+                print("   ⚠️ Pinnacle rate limit (429). Ждем...")
+                return None
             else:
-                print(f"   ⏳ [ЖДЁМ] {match.get('title')} — ещё не прошло 2.5ч с начала")
+                print(f"   ⚠️ Pinnacle error {r.status_code} for {endpoint}")
+                return None
+    except Exception as e:
+        print(f"   ⚠️ Pinnacle request failed: {e}")
+        return None
 
-    if finished_dict:
-        print(f"✅ Итого обработано {len(finished_dict)} матчей. Записываю в finished_matches.")
-        async with httpx.AsyncClient() as client:
-            await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
+async def fetch_pinnacle_matchups():
+    print("📥 Загружаю матчи из Pinnacle...")
+    leagues = await fetch_pinnacle_data("/sports/1/leagues")
+    if not leagues:
+        print("   ❌ Не удалось загрузить лиги Pinnacle.")
+        return []
+
+    allowed_league_ids = []
+    for lg in leagues:
+        name = lg.get("name", "")
+        if any(allowed in name.lower() for allowed in ALLOWED_LEAGUES):
+            allowed_league_ids.append(lg.get("id"))
+
+    if not allowed_league_ids:
+        print("   ⚠️ Не найдено подходящих лиг по вайтлисту.")
+        return []
+
+    print(f"   🔍 Найдено {len(allowed_league_ids)} подходящих лиг. Загружаю матчи...")
+    
+    all_matchups = []
+    for lg_id in allowed_league_ids:
+        matchups = await fetch_pinnacle_data(f"/leagues/{lg_id}/matchups")
+        if matchups:
+            for m in matchups:
+                m["_league_name"] = next((l["name"] for l in leagues if l["id"] == lg_id), "Футбол")
+                all_matchups.append(m)
+
+    return all_matchups
+
+async def fetch_pinnacle_odds(matchup_ids):
+    print(f"📥 Загружаю коэффициенты для {len(matchup_ids)} матчей...")
+    odds_data = {}
+    for mid in matchup_ids:
+        markets = await fetch_pinnacle_data(f"/matchups/{mid}/markets/straight")
+        if markets:
+            odds_data[mid] = markets
+    return odds_data
 
 async def firebase_get(path):
     try:
@@ -558,7 +481,7 @@ async def firebase_put(path, data):
     except Exception: return False
 
 async def main():
-    print("🔄 [Scraper] Запуск...")
+    print("🔄 [Scraper] Запуск (Pinnacle)...")
 
     old_matches_dict = await firebase_get("matches") or {}
     if not isinstance(old_matches_dict, dict): old_matches_dict = {}
@@ -570,86 +493,55 @@ async def main():
     logo_cache = _cache_from_fb(raw_cache)
     print(f"📥 В кэше логотипов: {len(logo_cache)}")
 
-    print("📥 Загружаю LIVE...")
-    live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
-    if live_data:
-        sports = []
-        for item in live_data:
-            sp = item.get("payload", {}).get("sport", {})
-            comps = item.get("payload", {}).get("competitionsWithEvents", [])
-            cnt = sum(len(c.get("events", [])) for c in comps)
-            sports.append(f"ID={sp.get('id')} ({sp.get('name')}) - {cnt}")
-        print(f"   🔍 LIVE API: {', '.join(sports)}")
-    else:
-        print("   ⚠️ LIVE пустой ответ.")
+    matchups = await fetch_pinnacle_matchups()
+    if not matchups:
+        print("❌ Матчи не получены. Завершаю.")
+        return
 
-    print("📥 Загружаю ЛИНИЮ...")
-    line_data = fetch_olimp_matches(OLIMP_LINE_URL)
+    matchup_ids = [m["id"] for m in matchups]
+    odds_map = await fetch_pinnacle_odds(matchup_ids)
 
     all_matches = []
     now_ts = time.time()
 
-    def parse(data, status_type):
-        count = 0
-        for sg in data:
-            sport = sg.get("payload", {}).get("sport", {})
-            if str(sport.get("id")) != "1": continue
-            comps = sg.get("payload", {}).get("competitionsWithEvents", [])
-            for comp in comps:
-                comp_name = comp.get("competition", {}).get("name", "Футбол")
-                for ev in comp.get("events", []):
-                    t1 = ev.get("team1Name", ""); t2 = ev.get("team2Name", "")
-                    if t1 and t2 and is_valid_match(t1, t2, comp_name):
-                        st = ev.get("startDateTime")
-                        actual_status = status_type
-                        if status_type == "Скоро" and st and st < now_ts:
-                            actual_status = "LIVE"
-                        all_matches.append((ev, actual_status, comp_name))
-                        count += 1
-        return count
+    for m in matchups:
+        m_id = m.get("id")
+        if not m_id: continue
 
-    live_count = parse(live_data, "LIVE")
-    line_count = parse(line_data, "Скоро")
-    print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
+        league_name = m.get("_league_name", "Футбол")
+        home = m.get("home", "")
+        away = m.get("away", "")
+        
+        if not is_valid_match(home, away, league_name): continue
+
+        start_time_str = m.get("startTime")
+        start_ts = 0
+        if start_time_str:
+            try:
+                start_ts = int(time.mktime(time.strptime(start_time_str, "%Y-%m-%dT%H:%M:%SZ")))
+            except:
+                pass
+
+        status = "Скоро"
+        if m.get("isLive"): status = "LIVE"
+        elif start_ts and start_ts < now_ts: status = "LIVE"
+
+        all_matches.append({
+            "id": m_id, "home": home, "away": away,
+            "league": league_name, "start_ts": start_ts,
+            "status_type": status, "matchup": m
+        })
+
+    print(f"⚽ Всего валидных матчей: {len(all_matches)}")
 
     missing = set()
-    for ev, _, league_name in all_matches:
-        for t in (ev.get("team1Name"), ev.get("team2Name")):
+    for m in all_matches:
+        for t in (m["home"], m["away"]):
             if not t: continue
-            hint = league_to_country(league_name) or ""
+            hint = league_to_country(m["league"]) or ""
             ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
             force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
-            if force: missing.add((t, league_name, force))
-
-    stale_live_matches = []
-    for mid, old_m in old_matches_dict.items():
-        if not isinstance(old_m, dict): continue
-        if not old_m.get("status", "").startswith("LIVE"): continue
-        if mid in finished_known: continue
-        
-        t1_old = old_m.get("home", "")
-        t2_old = old_m.get("away", "")
-        league_old = old_m.get("league", "")
-        
-        if not is_valid_match(t1_old, t2_old, league_old):
-            print(f"   🗑 Удаляю мусорный LIVE из базы: {old_m.get('title')} | {league_old}")
-            continue
-
-        st = old_m.get("start_time", 0)
-        if st and now_ts > st + 10800:
-            print(f"   🗑 Удаляю старый LIVE (>3ч) из базы: {old_m.get('title')}")
-            continue
-
-        stale_live_matches.append((mid, old_m))
-        hint = league_to_country(league_old) or ""
-        for t in (old_m.get("home"), old_m.get("away")):
-            if not t: continue
-            ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            if not ex or _is_fallback(ex):
-                missing.add((t, league_old, True))
-
-    if stale_live_matches:
-        print(f"🔁 Найдено {len(stale_live_matches)} 'зависших' LIVE-матчей — обновляю логотипы")
+            if force: missing.add((t, m["league"], force))
 
     if missing:
         print(f"🔎 Поиск логотипов для {len(missing)} пар...")
@@ -666,90 +558,46 @@ async def main():
         print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
     matches_dict = {}
-    for ev, status_type, league_name in all_matches:
-        ev_id = ev.get("id")
-        mid = f"olimp_{ev_id}"
+    for m in all_matches:
+        mid = f"pinnacle_{m['id']}"
         if mid in finished_known: continue
 
-        t1 = ev.get("team1Name"); t2 = ev.get("team2Name")
-        hint = league_to_country(league_name) or ""
+        t1 = m["home"]; t2 = m["away"]
+        hint = league_to_country(m["league"]) or ""
         hl = find_logo(logo_cache, t1, hint)
         al = find_logo(logo_cache, t2, hint)
 
+        odds = odds_map.get(m["id"], [])
+        parsed_markets = parse_pinnacle_odds(odds, t1, t2)
+        
         p1 = px = p2 = None
-        markets_data = {}
+        if "Исход" in parsed_markets:
+            for o in parsed_markets["Исход"]:
+                if o["name"] == "П1": p1 = o["odds"]
+                elif o["name"] == "Х": px = o["odds"]
+                elif o["name"] == "П2": p2 = o["odds"]
 
-        for out in ev.get("outcomes", []):
-            gn = out.get("groupName", "Другое").strip()
-            sn = out.get("shortName", "").strip()
-            prob = out.get("probability")
-            
-            if prob is None or not sn: continue
-            
-            if gn not in markets_data:
-                markets_data[gn] = []
-            markets_data[gn].append({"name": sn, "odds": prob})
-
-            if "Исход" in gn or "Результат" in gn:
-                if sn in ["П1", "1"]: p1 = prob
-                elif sn in ["X", "Х", "Ничья"]: px = prob
-                elif sn in ["П2", "2"]: p2 = prob
-
-        score = "VS"; status_str = status_type
-        if status_type == "LIVE":
-            sc, mn = extract_live_score_and_time(ev)
-            if sc: score = sc
-            status_str = build_status("LIVE", mn)
+        score = "VS"
+        status_str = m["status_type"]
+        if status_str == "LIVE":
+            status_str = "LIVE" # Детали счета можно будет добавить позже
 
         time_display = status_str
-        if status_type == "Скоро":
-            st = ev.get("startDateTime")
-            if st: time_display = time.strftime("%d.%m %H:%M", time.localtime(st))
+        if status_str == "Скоро" and m["start_ts"]:
+            time_display = time.strftime("%d.%m %H:%M", time.localtime(m["start_ts"]))
 
         matches_dict[mid] = {
             "title": f"{t1} - {t2}", "home": t1, "away": t2,
-            "homeLogo": hl, "awayLogo": al, "league": league_name,
+            "homeLogo": hl, "awayLogo": al, "league": m["league"],
             "status": time_display, "score": score,
-            "start_time": ev.get("startDateTime"),
+            "start_time": m["start_ts"],
             "odds": {"1": p1, "X": px, "2": p2},
-            "markets": markets_data
+            "markets": parsed_markets
         }
-
-    preserved = 0
-    for mid, old_m in stale_live_matches:
-        old_hint = league_to_country(old_m.get("league", "")) or ""
-        new_h = find_logo(logo_cache, old_m.get("home", ""), old_hint)
-        new_a = find_logo(logo_cache, old_m.get("away", ""), old_hint)
-
-        if mid not in matches_dict:
-            st = old_m.get("start_time")
-            if st and now_ts > st and now_ts < st + 10800:
-                if new_h: old_m["homeLogo"] = new_h
-                if new_a: old_m["awayLogo"] = new_a
-                matches_dict[mid] = old_m
-                preserved += 1
-                print(f"♻️ Сохранён LIVE (не в выдаче): {old_m.get('title')} | logo={'✅' if new_h else '❌'}")
-            continue
-
-        new_m = matches_dict[mid]
-        if old_m.get("score") and old_m.get("score") != "VS":
-            new_m["score"] = old_m["score"]
-        if old_m.get("status") and old_m.get("status") != "LIVE":
-            new_m["status"] = old_m["status"]
-        if not new_m.get("homeLogo") and old_m.get("homeLogo"):
-            new_m["homeLogo"] = old_m["homeLogo"]
-        if not new_m.get("awayLogo") and old_m.get("awayLogo"):
-            new_m["awayLogo"] = old_m["awayLogo"]
-        preserved += 1
-
-    if preserved:
-        print(f"🛡 Сохранено LIVE-матчей: {preserved}")
 
     if matches_dict:
         await firebase_put("matches", matches_dict)
         print(f"🔥 Сохранено {len(matches_dict)} матчей")
-
-    await fetch_finished_matches(old_matches_dict, set(matches_dict.keys()))
 
 if __name__ == "__main__":
     asyncio.run(main())
