@@ -1,4 +1,4 @@
-rebrowser-playwright
 httpx
 curl_cffi
 rapidfuzz
+rebrowser-playwright
