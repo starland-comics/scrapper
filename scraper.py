@@ -107,7 +107,7 @@ TEAM_OVERRIDES = {
     "Аль-Кадисия Хубар": "Al-Qadsiah", "Аль-Шабаб Рияд": "Al-Shabab", "Аль-Наср Рияд": "Al-Nassr",
     "Аль-Хиляль Рияд": "Al-Hilal", "Аль-Ахли Джидда": "Al-Ahli", "Аль-Иттихад Джидда": "Al-Ittihad",
     "Аль-Иттифак": "Al-Ettifaq", "Аль-Таавун": "Al-Taawoun", "Аль-Фатех": "Al-Fateh",
-    "Аль-Фейха": "Al-Fayha", "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazm",
+    "Аль-Фейха": "Al-Fayha", "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazem",
     "Эстеглаль Тегеран": "Esteghlal", "Тэджон Ситизен": "Daejeon Citizen", "Чонбук": "Jeonbuk",
     "Штурм": "Sturm Graz", "Камбур": "Cambuur", "ВПР Астана": "Astana", "Хромтау": "Khromtau",
     "Кайсар": "Kaisar", "Нью-Йорк Ред Буллс": "New York Red Bulls", "Лос-Анджелес Гэлакси": "LA Galaxy",
@@ -145,7 +145,6 @@ LEAGUE_COUNTRY_HINTS = {
 LOGO_STATS = {"fotmob": 0, "thesportsdb": 0, "direct": 0, "fallback": 0, "cache": 0}
 FALLBACK_TEAMS = []
 
-# --- Все функции логотипов (без изменений) ---
 def _normalize(s):
     s = (s or "").lower().strip()
     for w in (" fc", " cf", " sc", " ac", " fk", " afc", " club", " фк", " клуб"):
@@ -321,7 +320,6 @@ async def search_all_logos(teams_with_league, cache, name_en_map):
                 LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team)
     await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
-# --- Время и статусы ---
 def _try_extract_minute(val):
     if val is None or isinstance(val, bool): return None
     if isinstance(val, (int, float)):
@@ -401,7 +399,6 @@ def build_status(status_type, minute):
     if minute in ("HT", "FT", "1H", "2H"): return f"LIVE · {minute}"
     return f"LIVE {minute}'"
 
-# --- REST Olimpbet ---
 def fetch_olimp_matches(url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json"}
     for _ in range(2):
@@ -422,11 +419,11 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-# --- WebSocket Playwright ---
-async def fetch_live_odds_via_websocket():
-    print("🌐 Запускаю Playwright для перехвата WebSocket...")
+# --- НОВЫЙ ПАРСЕР ЧЕРЕЗ ПЕРЕХВАТ СЕТЕВЫХ ЗАПРОСОВ ---
+async def fetch_odds_via_playwright():
+    print("🌐 Запускаю Playwright (перехват XHR)...")
     odds_data = {}
-    msg_counter = 0
+    captured_urls = set()
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -437,62 +434,62 @@ async def fetch_live_odds_via_websocket():
         page = await context.new_page()
         await stealth_async(page)
 
-        def on_ws(ws):
-            print(f"🔌 [WS] Подключен: {ws.url}")
-            def on_frame(payload):
-                nonlocal msg_counter
-                msg_counter += 1
-                if msg_counter <= 10:  # Печатаем первые 10 сообщений для диагностики
-                    print(f"   📦 [WS msg #{msg_counter}]: {str(payload)[:300]}")
+        async def on_response(response):
+            url = response.url
+            if "api" in url or "graphql" in url or "json" in url:
                 try:
-                    data = json.loads(payload)
-                    if isinstance(data, dict):
-                        event_id = data.get("eventId") or data.get("id")
-                        markets = data.get("markets") or data.get("outcomes")
-                        if event_id and markets:
-                            parsed = {}
-                            for market in markets:
-                                gn = market.get("groupName") or market.get("name") or "Другое"
-                                outs = []
-                                for out in (market.get("outcomes") or []):
-                                    sn = out.get("shortName") or out.get("name")
-                                    pr = out.get("probability") or out.get("odds") or out.get("price")
-                                    if sn and pr: outs.append({"name": sn, "odds": pr})
-                                if outs: parsed[gn] = outs
-                            if parsed: odds_data[str(event_id)] = parsed
-                except: pass
-            ws.on("framereceived", on_frame)
+                    if response.status == 200:
+                        ct = response.headers.get("content-type", "")
+                        if "application/json" in ct:
+                            data = await response.json()
+                            # Ищем JSON, где есть данные о матчах или кэфах
+                            if isinstance(data, (dict, list)):
+                                captured_urls.add(url)
+                                # Рекурсивный поиск event_id и рынков
+                                def parse_node(node):
+                                    if isinstance(node, dict):
+                                        ev_id = node.get("id") or node.get("eventId")
+                                        markets = node.get("markets") or node.get("outcomes")
+                                        if ev_id and markets:
+                                            parsed = {}
+                                            for m in markets:
+                                                gn = m.get("groupName") or m.get("name") or "Другое"
+                                                outs = []
+                                                for out in (m.get("outcomes") or []):
+                                                    sn = out.get("shortName") or out.get("name")
+                                                    pr = out.get("probability") or out.get("odds") or out.get("price")
+                                                    if sn and pr: outs.append({"name": sn, "odds": pr})
+                                                if outs: parsed[gn] = outs
+                                            if parsed: odds_data[str(ev_id)] = parsed
+                                        for v in node.values(): parse_node(v)
+                                    elif isinstance(node, list):
+                                        for item in node: parse_node(item)
+                                parse_node(data)
+                except Exception:
+                    pass
 
-        page.on("websocket", on_ws)
+        page.on("response", on_response)
 
-        print("   📄 Открываю https://www.olimp.bet/app/live/1 ...")
+        print("   📄 Открываю https://www.olimp.bet/live ...")
         try:
-            await page.goto("https://www.olimp.bet/app/live/1", wait_until="domcontentloaded", timeout=45000)
-            print(f"   ✅ Страница загружена. URL={page.url}, Title={await page.title()}")
+            await page.goto("https://www.olimp.bet/live", wait_until="domcontentloaded", timeout=45000)
+            print(f"   ✅ Страница загружена. URL={page.url}")
         except Exception as e:
-            print(f"   ❌ Ошибка загрузки страницы: {e}")
+            print(f"   ❌ Ошибка загрузки: {e}")
 
-        await asyncio.sleep(20) # Даем время на сокеты и рендер
+        # Ждем и скроллим, чтобы подгрузились матчи
+        await asyncio.sleep(15)
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(10)
+
         await browser.close()
 
-    print(f"✅ Получено рынков для {len(odds_data)} событий (всего WS-сообщений: {msg_counter}).")
+    print(f"✅ Перехвачено API-запросов: {len(captured_urls)}")
+    if captured_urls:
+        print(f"🔗 Примеры URL: {list(captured_urls)[:5]}")
+    print(f"✅ Получено рынков для {len(odds_data)} событий.")
     return odds_data
 
-# --- Firebase ---
-async def firebase_get(path):
-    try:
-        async with httpx.AsyncClient() as client:
-            return (await client.get(f"{FIREBASE_DB_URL}/{path}.json", timeout=15.0)).json()
-    except Exception: return None
-
-async def firebase_put(path, data):
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.put(f"{FIREBASE_DB_URL}/{path}.json", json=data, timeout=60.0)
-            return r.status_code == 200
-    except Exception: return False
-
-# --- Результаты ---
 async def fetch_olimp_results():
     print("📥 Загружаю результаты из Olimpbet...")
     results_dict = {}
@@ -595,12 +592,24 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         async with httpx.AsyncClient() as client:
             await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
 
-# --- Main ---
-async def main():
-    print("🔄 [Scraper] Запуск (WebSocket Playwright)...")
+async def firebase_get(path):
+    try:
+        async with httpx.AsyncClient() as client:
+            return (await client.get(f"{FIREBASE_DB_URL}/{path}.json", timeout=15.0)).json()
+    except Exception: return None
 
-    # 1. Получаем рынки из WS
-    ws_odds = await fetch_live_odds_via_websocket()
+async def firebase_put(path, data):
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.put(f"{FIREBASE_DB_URL}/{path}.json", json=data, timeout=60.0)
+            return r.status_code == 200
+    except Exception: return False
+
+async def main():
+    print("🔄 [Scraper] Запуск (Playwright XHR)...")
+
+    # 1. Получаем кэфы из Playwright
+    ws_odds = await fetch_odds_via_playwright()
 
     # 2. Firebase и лого
     old_matches_dict = await firebase_get("matches") or {}
@@ -685,10 +694,10 @@ async def main():
                 elif sn in ["X", "Х"]: px = prob
                 elif sn in ["П2", "2"]: p2 = prob
 
-        # Из WebSocket (добавляем/перезаписываем)
+        # Из Playwright (добавляем/перезаписываем)
         if str(ev_id) in ws_odds:
             for gn, outs in ws_odds[str(ev_id)].items():
-                markets_data[gn] = outs # перезаписываем полной росписью из сокета
+                markets_data[gn] = outs # перезаписываем полной росписью
 
         score = "VS"; status_str = status_type
         if status_type == "LIVE":
