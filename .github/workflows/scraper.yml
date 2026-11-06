@@ -2,7 +2,7 @@ name: WinStars Scraper
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # каждые 10 минут, чтобы не палить Flashscore
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,25 +20,25 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
           cache: 'pip'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Cache rebrowser-playwright
+      - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: rebrowser-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
 
-      - name: Install rebrowser system deps
-        run: rebrowser_playwright install-deps chromium
+      - name: Install Playwright system deps
+        run: playwright install-deps chromium
 
-      - name: Install rebrowser Chromium
+      - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: rebrowser_playwright install chromium
+        run: playwright install chromium
 
       - name: Run Scraper
         run: python -u scraper.py
