@@ -419,7 +419,7 @@ def find_logo(cache, team, hint):
     return ""
 
 async def fetch_odds_via_playwright():
-    print("🌐 Запускаю rebrowser-playwright (перехват XHR)...")
+    print("🌐 Запускаю rebrowser-playwright (перехват XHR и WS)...")
     odds_data = {}
     captured_urls = set()
 
@@ -431,6 +431,27 @@ async def fetch_odds_via_playwright():
         )
         page = await context.new_page()
 
+        # Функция парсинга JSON-узла
+        def parse_json_node(node):
+            if isinstance(node, dict):
+                ev_id = node.get("id") or node.get("eventId")
+                markets = node.get("markets") or node.get("outcomes")
+                if ev_id and markets:
+                    parsed = {}
+                    for m in markets:
+                        gn = m.get("groupName") or m.get("name") or "Другое"
+                        outs = []
+                        for out in (m.get("outcomes") or []):
+                            sn = out.get("shortName") or out.get("name")
+                            pr = out.get("probability") or out.get("odds") or out.get("price")
+                            if sn and pr: outs.append({"name": sn, "odds": pr})
+                        if outs: parsed[gn] = outs
+                    if parsed: odds_data[str(ev_id)] = parsed
+                for v in node.values(): parse_json_node(v)
+            elif isinstance(node, list):
+                for item in node: parse_json_node(item)
+
+        # 1. Слушаем XHR
         async def on_response(response):
             url = response.url
             if "api" in url or "graphql" in url:
@@ -441,55 +462,53 @@ async def fetch_odds_via_playwright():
                             data = await response.json()
                             if isinstance(data, (dict, list)):
                                 captured_urls.add(url)
-                                if any(k in url for k in ["event", "market", "odds"]):
-                                    print(f"   🔍 [URL] {url}")
-                                def parse_node(node):
-                                    if isinstance(node, dict):
-                                        ev_id = node.get("id") or node.get("eventId")
-                                        markets = node.get("markets") or node.get("outcomes")
-                                        if ev_id and markets:
-                                            parsed = {}
-                                            for m in markets:
-                                                gn = m.get("groupName") or m.get("name") or "Другое"
-                                                outs = []
-                                                for out in (m.get("outcomes") or []):
-                                                    sn = out.get("shortName") or out.get("name")
-                                                    pr = out.get("probability") or out.get("odds") or out.get("price")
-                                                    if sn and pr: outs.append({"name": sn, "odds": pr})
-                                                if outs: parsed[gn] = outs
-                                            if parsed: odds_data[str(ev_id)] = parsed
-                                        for v in node.values(): parse_node(v)
-                                    elif isinstance(node, list):
-                                        for item in node: parse_node(item)
-                                parse_node(data)
+                                if "event" in url:
+                                    print(f"   🔍 [XHR] {url}")
+                                parse_json_node(data)
                 except Exception:
                     pass
 
         page.on("response", on_response)
 
-        print("   📄 Открываю https://www.olimp.bet/live ...")
+        # 2. Слушаем WebSocket
+        def on_ws(ws):
+            print(f"   🔌 [WS] Подключен: {ws.url}")
+            def on_frame(payload):
+                try:
+                    data = json.loads(payload)
+                    parse_json_node(data)
+                except Exception:
+                    pass
+            ws.on("framereceived", on_frame)
+
+        page.on("websocket", on_ws)
+
+        # Открываем футбольный лайв
+        print("   📄 Открываю https://www.olimp.bet/live/futbol-1 ...")
         try:
-            await page.goto("https://www.olimp.bet/live", wait_until="domcontentloaded", timeout=45000)
+            await page.goto("https://www.olimp.bet/live/futbol-1", wait_until="domcontentloaded", timeout=45000)
             print(f"   ✅ Страница загружена. URL={page.url}")
         except Exception as e:
             print(f"   ❌ Ошибка загрузки: {e}")
             await browser.close()
             return {}
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(8) # Ждем прогрузки матчей
 
-        # Ищем первую ссылку на матч и переходим
+        # Ищем ссылку на конкретный матч (обычно она содержит /live/futbol-1/<id> или <id>)
         try:
             links = await page.eval_on_selector_all(
-                "a[href*='live']",
-                "els => els.map(e => e.href).filter(h => h && !h.endsWith('/live'))"
+                "a[href*='/live/']",
+                "els => els.map(e => e.href).filter(h => /\\/live\\/[a-z-]+-\\d+\\/\\d+/.test(h))"
             )
-            print(f"   🔗 Найдено {len(links)} ссылок для клика. Примеры: {links[:5]}")
+            print(f"   🔗 Найдено матчей для клика: {len(links)}")
 
             if links:
                 match_url = links[0]
                 print(f"   👉 Открываю матч: {match_url}")
                 await page.goto(match_url, wait_until="domcontentloaded", timeout=30000)
+                
+                # Ждем, пока прогрузятся все вкладки с рынками
                 await asyncio.sleep(15)
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(10)
@@ -499,8 +518,6 @@ async def fetch_odds_via_playwright():
         await browser.close()
 
     print(f"✅ Перехвачено API-запросов: {len(captured_urls)}")
-    if captured_urls:
-        print(f"🔗 Все URL: {list(captured_urls)}")
     print(f"✅ Получено рынков для {len(odds_data)} событий.")
     return odds_data
 
@@ -620,7 +637,7 @@ async def firebase_put(path, data):
     except Exception: return False
 
 async def main():
-    print("🔄 [Scraper] Запуск (rebrowser-playwright XHR)...")
+    print("🔄 [Scraper] Запуск (rebrowser-playwright XHR+WS)...")
 
     ws_odds = await fetch_odds_via_playwright()
 
