@@ -7,15 +7,15 @@ import os
 import re
 import hashlib
 import base64
+import subprocess
+from pathlib import Path
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
-from rebrowser_playwright.async_api import async_playwright
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
 OLIMP_RESULTS_URL = "https://www.olimp.bet/api/v4/0/results/sports-with-competitions-with-events"
-ODDSPORTAL_BASE = "https://www.oddsportal.com"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
@@ -429,165 +429,147 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-# ============ ODDSportal ПАРСЕР ============
+# ============ ODDSHARVESTER ИНТЕГРАЦИЯ ============
 
-async def search_oddsportal_match(page, home_en, away_en):
-    """Ищет URL матча на Oddsportal через встроенный поиск."""
-    query = f"{home_en} {away_en}"
-    search_url = f"{ODDSPORTAL_BASE}/search/?q={urllib.parse.quote(query)}"
+def fetch_full_odds_via_oddsharvester():
+    """Запускает OddsHarvester CLI для получения полной росписи live-матчей."""
+    print("📥 Запускаю OddsHarvester для сбора полной росписи...")
+    
+    output_file = Path("/tmp/oddsharvester_output.json")
+    
+    # Собираем рынки: 1x2, btts, over/under, asian handicap, double chance, draw no bet
+    markets = "1x2,btts,over_under,asian_handicap,double_chance,draw_no_bet"
+    
+    cmd = [
+        "oddsharvester", "live",
+        "-s", "football",
+        "-m", markets,
+        "--headless",
+        "--format", "json",
+        "-o", str(output_file)
+    ]
+    
+    print(f"   🚀 Команда: {' '.join(cmd)}")
     
     try:
-        await page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
-        await asyncio.sleep(3)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
-        links = await page.eval_on_selector_all(
-            "a[href*='/football/'], a[href*='/match/']",
-            "els => els.map(e => e.href).filter(h => h && (h.includes('/football/') || h.includes('/match/')))"
-        )
+        if result.returncode != 0:
+            print(f"   ⚠️ OddsHarvester exit code: {result.returncode}")
+            print(f"   stderr: {result.stderr[:500]}")
+            return {}
         
-        if not links:
-            search_url2 = f"{ODDSPORTAL_BASE}/search/?q={urllib.parse.quote(home_en)}"
-            await page.goto(search_url2, wait_until="domcontentloaded", timeout=20000)
-            await asyncio.sleep(3)
-            links = await page.eval_on_selector_all(
-                "a[href*='/football/'], a[href*='/match/']",
-                "els => els.map(e => e.href).filter(h => h && (h.includes('/football/') || h.includes('/match/')))"
-            )
+        if not output_file.exists():
+            print("   ⚠️ Файл вывода не создан")
+            return {}
         
-        for link in links[:5]:
-            return link
-        return None
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        print(f"   ✅ OddsHarvester собрал данные для {len(data)} матчей")
+        return data
+        
+    except subprocess.TimeoutExpired:
+        print("   ⚠️ OddsHarvester timeout (10 минут)")
+        return {}
     except Exception as e:
-        print(f"      ⚠️ Oddsportal search error: {e}")
-        return None
+        print(f"   ⚠️ OddsHarvester error: {e}")
+        return {}
 
-
-async def parse_oddsportal_odds(page):
-    """Парсит кэфы со страницы Oddsportal."""
-    markets = {}
-    
-    try:
-        await page.wait_for_selector("div[class*='border-b'], table[class*='table-main']", timeout=10000)
-        await asyncio.sleep(2)
-        
-        # 1X2
-        rows = await page.eval_on_selector_all(
-            "div[class*='border-b']",
-            """els => els.map(el => {
-                const name = el.querySelector("[class*='text-']")?.innerText || '';
-                const odds = Array.from(el.querySelectorAll("[class*='odds']")).map(o => o.innerText);
-                return { name, odds };
-            }).filter(r => r.odds.length > 0)"""
-        )
-        
-        if rows:
-            markets["Исход"] = []
-            for r in rows[:1]:
-                for odd_text in r["odds"][:3]:
-                    try: odd = float(odd_text.replace(",", "."))
-                    except: continue
-                    if odd <= 1.0: continue
-                    idx = len(markets["Исход"])
-                    name = ["П1", "Х", "П2"][idx] if idx < 3 else f"Исход {idx+1}"
-                    markets["Исход"].append({"name": name, "odds": odd})
-        
-        # Тоталы и форы: ищем вкладки
-        tabs = await page.eval_on_selector_all(
-            "a[class*='tab'], div[class*='tab']",
-            "els => els.map(e => ({ text: e.innerText.trim(), href: e.getAttribute('href') || '' }))"
-        )
-        
-        for tab in tabs:
-            tab_text = (tab.get("text") or "").lower()
-            group_name = None
-            if "over/under" in tab_text or "тотал" in tab_text:
-                group_name = "Тотал"
-            elif "handicap" in tab_text or "фора" in tab_text:
-                group_name = "Фора"
-            elif "btts" in tab_text or "both teams" in tab_text or "обе забьют" in tab_text:
-                group_name = "Обе забьют"
-            
-            if not group_name or group_name in markets: continue
-            
-            try:
-                await page.click(f"text={tab['text']}", timeout=5000)
-                await asyncio.sleep(2)
-                
-                rows = await page.eval_on_selector_all(
-                    "div[class*='border-b']",
-                    """els => els.map(el => {
-                        const name = el.querySelector("[class*='text-']")?.innerText || '';
-                        const odds = Array.from(el.querySelectorAll("[class*='odds']")).map(o => o.innerText);
-                        return { name, odds };
-                    }).filter(r => r.odds.length > 0)"""
-                )
-                
-                if rows:
-                    markets[group_name] = []
-                    for r in rows[:20]:
-                        for odd_text in r["odds"][:2]:
-                            try: odd = float(odd_text.replace(",", "."))
-                            except: continue
-                            if odd <= 1.0: continue
-                            name = r["name"].strip()
-                            if not name: continue
-                            markets[group_name].append({"name": name, "odds": odd})
-            except Exception:
-                pass
-        
-        return markets
-    except Exception as e:
-        print(f"      ⚠️ Oddsportal parse error: {e}")
-        return markets
-
-
-async def fetch_oddsportal_full(unique_matches, name_en_map):
-    """Открывает Oddsportal, ищет каждый live-матч и парсит кэфы."""
+def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
+    """
+    Парсит вывод OddsHarvester и матчит с матчами Olimpbet.
+    Возвращает словарь {olimp_ev_id: {group: [{name, odds}]}}
+    """
     result = {}
     
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080},
-            locale="en-US",
-        )
-        page = await context.new_page()
+    if not odd_data:
+        return result
+    
+    # Строим индекс матчей Olimpbet по нормализованным названиям команд
+    olimp_index = []
+    for ev_id, (ev, status, league) in unique_matches.items():
+        t1_ru = ev.get("team1Name", "")
+        t2_ru = ev.get("team2Name", "")
+        t1_en = name_en_map.get(t1_ru, t1_ru)
+        t2_en = name_en_map.get(t2_ru, t2_ru)
+        olimp_index.append({
+            "ev_id": ev_id,
+            "home_norm": _normalize(t1_en),
+            "away_norm": _normalize(t2_en),
+        })
+    
+    for match in odd_data:
+        # OddsHarvester возвращает поля home_team, away_team, odds
+        home = (match.get("home_team") or match.get("home") or "").strip()
+        away = (match.get("away_team") or match.get("away") or "").strip()
         
-        live_items = [(ev_id, data) for ev_id, data in unique_matches.items() if data[1] == "LIVE"]
-        print(f"   📊 Oddsportal: обрабатываю {len(live_items)} live-матчей")
+        if not home or not away: continue
         
-        for idx, (ev_id, (ev, status, league)) in enumerate(live_items, 1):
-            t1_ru = ev.get("team1Name", "")
-            t2_ru = ev.get("team2Name", "")
-            t1_en = name_en_map.get(t1_ru, t1_ru)
-            t2_en = name_en_map.get(t2_ru, t2_ru)
-            
-            print(f"   [{idx}/{len(live_items)}] {t1_ru} - {t2_ru}")
-            
-            match_url = await search_oddsportal_match(page, t1_en, t2_en)
-            if not match_url:
-                print(f"      ❌ Не найден на Oddsportal")
-                continue
-            
-            print(f"      🔗 {match_url}")
-            
-            try:
-                await page.goto(match_url, wait_until="domcontentloaded", timeout=25000)
-                await asyncio.sleep(3)
-                odds = await parse_oddsportal_odds(page)
-                
-                if odds:
-                    result[ev_id] = odds
-                    print(f"      ✅ Рынков: {len(odds)}")
-                else:
-                    print(f"      ⚠️ Кэфов нет")
-            except Exception as e:
-                print(f"      ❌ Ошибка: {e}")
-            
-            await asyncio.sleep(1)
+        home_norm = _normalize(home)
+        away_norm = _normalize(away)
         
-        await browser.close()
+        # Ищем совпадение по названиям команд
+        best_ev_id = None
+        best_score = 0
+        
+        for item in olimp_index:
+            s1 = fuzz.token_set_ratio(home_norm, item["home_norm"])
+            s2 = fuzz.token_set_ratio(away_norm, item["away_norm"])
+            combined = s1 + s2
+            
+            if s1 >= 75 and s2 >= 75 and combined > best_score:
+                best_score = combined
+                best_ev_id = item["ev_id"]
+        
+        if not best_ev_id:
+            continue
+        
+        # Парсим рынки
+        markets = {}
+        odds_list = match.get("odds") or []
+        
+        for odd_item in odds_list:
+            market_name = (odd_item.get("market") or "").strip()
+            outcome = (odd_item.get("outcome") or "").strip()
+            price = odd_item.get("price") or odd_item.get("odds")
+            
+            if price is None: continue
+            try: price = float(price)
+            except: continue
+            if price <= 1.0: continue
+            
+            # Маппинг рынков
+            group_name = None
+            mlow = market_name.lower()
+            
+            if "1x2" in mlow or "match winner" in mlow:
+                group_name = "Исход"
+                if outcome in ["1", "Home"]: outcome = "П1"
+                elif outcome in ["X", "Draw"]: outcome = "Х"
+                elif outcome in ["2", "Away"]: outcome = "П2"
+            elif "btts" in mlow or "both teams" in mlow:
+                group_name = "Обе забьют"
+                if outcome.lower() == "yes": outcome = "Да"
+                elif outcome.lower() == "no": outcome = "Нет"
+            elif "over" in mlow and "under" in mlow:
+                group_name = "Тотал"
+            elif "handicap" in mlow:
+                group_name = "Фора"
+            elif "double chance" in mlow:
+                group_name = "Двойной шанс"
+            elif "draw no bet" in mlow:
+                group_name = "Ничья не в счет"
+            
+            if not group_name: continue
+            
+            if group_name not in markets:
+                markets[group_name] = []
+            
+            markets[group_name].append({"name": outcome, "odds": price})
+        
+        if markets:
+            result[best_ev_id] = markets
     
     return result
 
@@ -716,7 +698,7 @@ async def firebase_put(path, data):
 # ============ MAIN ============
 
 async def main():
-    print("🔄 [Scraper] Запуск (Olimpbet + Oddsportal)...")
+    print("🔄 [Scraper] Запуск (Olimpbet + OddsHarvester)...")
 
     old_matches_dict = await firebase_get("matches") or {}
     if not isinstance(old_matches_dict, dict): old_matches_dict = {}
@@ -775,10 +757,10 @@ async def main():
     print(f"🔤 Перевожу {len(teams_ru)} названий команд...")
     name_en_map = batch_translate_ru_to_en(list(teams_ru))
 
-    # Oddsportal: полная роспись для live-матчей
-    print("🌐 Запускаю Oddsportal парсинг...")
-    op_odds_map = await fetch_oddsportal_full(unique_matches, name_en_map)
-    print(f"✅ Получено полных росписей с Oddsportal: {len(op_odds_map)}")
+    # OddsHarvester: полная роспись для live-матчей
+    odd_data = fetch_full_odds_via_oddsharvester()
+    odds_map = parse_oddsharvester_output(odd_data, unique_matches, name_en_map)
+    print(f"✅ Получено полных росписей с OddsHarvester: {len(odds_map)}")
 
     # Логотипы
     missing = set()
@@ -827,13 +809,14 @@ async def main():
                 elif sn in ["X", "Х"]: px = prob
                 elif sn in ["П2", "2"]: p2 = prob
 
-        # Полная роспись из Oddsportal
-        if ev_id in op_odds_map:
-            op_markets = op_odds_map[ev_id]
-            for gn, outs in op_markets.items():
+        # Полная роспись из OddsHarvester
+        if ev_id in odds_map:
+            odd_markets = odds_map[ev_id]
+            for gn, outs in odd_markets.items():
                 if outs: markets_data[gn] = outs
-            if "Исход" in op_markets:
-                for o in op_markets["Исход"]:
+            # Обновляем 1x2, если есть
+            if "Исход" in odd_markets:
+                for o in odd_markets["Исход"]:
                     if o["name"] == "П1": p1 = o["odds"]
                     elif o["name"] == "Х": px = o["odds"]
                     elif o["name"] == "П2": p2 = o["odds"]
@@ -862,7 +845,7 @@ async def main():
             "markets": markets_data
         }
 
-    print(f"✅ С полной росписью (Oddsportal): {with_full}")
+    print(f"✅ С полной росписью (OddsHarvester): {with_full}")
     print(f"⚠️  Только базовые П1/Х/П2 (Olimpbet): {with_base}")
 
     if matches_dict:
