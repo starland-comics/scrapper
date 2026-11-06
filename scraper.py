@@ -9,7 +9,7 @@ import hashlib
 import base64
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
-from playwright.async_api import async_playwright
+from rebrowser_playwright.async_api import async_playwright  # <-- ЗАМЕНА
 from playwright_stealth import stealth_async
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
@@ -419,9 +419,8 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-# --- НОВЫЙ ПАРСЕР ЧЕРЕЗ ПЕРЕХВАТ СЕТЕВЫХ ЗАПРОСОВ ---
 async def fetch_odds_via_playwright():
-    print("🌐 Запускаю Playwright (перехват XHR)...")
+    print("🌐 Запускаю rebrowser-playwright (перехват XHR)...")
     odds_data = {}
     captured_urls = set()
 
@@ -442,10 +441,8 @@ async def fetch_odds_via_playwright():
                         ct = response.headers.get("content-type", "")
                         if "application/json" in ct:
                             data = await response.json()
-                            # Ищем JSON, где есть данные о матчах или кэфах
                             if isinstance(data, (dict, list)):
                                 captured_urls.add(url)
-                                # Рекурсивный поиск event_id и рынков
                                 def parse_node(node):
                                     if isinstance(node, dict):
                                         ev_id = node.get("id") or node.get("eventId")
@@ -477,7 +474,6 @@ async def fetch_odds_via_playwright():
         except Exception as e:
             print(f"   ❌ Ошибка загрузки: {e}")
 
-        # Ждем и скроллим, чтобы подгрузились матчи
         await asyncio.sleep(15)
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         await asyncio.sleep(10)
@@ -606,12 +602,10 @@ async def firebase_put(path, data):
     except Exception: return False
 
 async def main():
-    print("🔄 [Scraper] Запуск (Playwright XHR)...")
+    print("🔄 [Scraper] Запуск (rebrowser-playwright XHR)...")
 
-    # 1. Получаем кэфы из Playwright
     ws_odds = await fetch_odds_via_playwright()
 
-    # 2. Firebase и лого
     old_matches_dict = await firebase_get("matches") or {}
     if not isinstance(old_matches_dict, dict): old_matches_dict = {}
     finished_known = await firebase_get("finished_matches") or {}
@@ -619,7 +613,6 @@ async def main():
     raw_cache = await firebase_get("team_logos") or {}
     logo_cache = _cache_from_fb(raw_cache)
 
-    # 3. REST
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
 
@@ -649,7 +642,6 @@ async def main():
     parse(line_data, "Скоро")
     print(f"⚽ Матчей для обработки: {len(all_matches)}")
 
-    # 4. Лого
     missing = set()
     for ev, _, league_name in all_matches:
         for t in (ev.get("team1Name"), ev.get("team2Name")):
@@ -666,7 +658,6 @@ async def main():
         await firebase_put("team_logos", _cache_to_fb(logo_cache))
         if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
-    # 5. Собираем matches_dict
     matches_dict = {}
     for ev, status_type, league_name in all_matches:
         ev_id = ev.get("id")
@@ -681,7 +672,6 @@ async def main():
         p1 = px = p2 = None
         markets_data = {}
 
-        # Из REST-исходов
         for out in ev.get("outcomes", []):
             gn = out.get("groupName", "Другое").strip()
             sn = out.get("shortName", "").strip()
@@ -694,10 +684,9 @@ async def main():
                 elif sn in ["X", "Х"]: px = prob
                 elif sn in ["П2", "2"]: p2 = prob
 
-        # Из Playwright (добавляем/перезаписываем)
         if str(ev_id) in ws_odds:
             for gn, outs in ws_odds[str(ev_id)].items():
-                markets_data[gn] = outs # перезаписываем полной росписью
+                markets_data[gn] = outs
 
         score = "VS"; status_str = status_type
         if status_type == "LIVE":
