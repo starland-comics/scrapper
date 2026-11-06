@@ -9,8 +9,7 @@ import hashlib
 import base64
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
-from rebrowser_playwright.async_api import async_playwright  # <-- ЗАМЕНА
-from playwright_stealth import stealth_async
+from rebrowser_playwright.async_api import async_playwright
 
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events"
@@ -431,7 +430,7 @@ async def fetch_odds_via_playwright():
             viewport={"width": 1920, "height": 1080}
         )
         page = await context.new_page()
-        await stealth_async(page)
+        # stealth_async(page) - УДАЛЕНО, так как rebrowser уже патчит всё сам
 
         async def on_response(response):
             url = response.url
