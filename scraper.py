@@ -418,9 +418,9 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-async def fetch_odds_via_playwright():
-    print("🌐 Запускаю rebrowser-playwright (перехват XHR и WS)...")
-    odds_data = {}
+# --- Разведчик через Playwright ---
+async def fetch_odds_via_playwright(ev_id):
+    print(f"🌐 Запускаю rebrowser-playwright для разведки матча {ev_id}...")
     captured_urls = set()
 
     async with async_playwright() as p:
@@ -431,197 +431,35 @@ async def fetch_odds_via_playwright():
         )
         page = await context.new_page()
 
-        # Функция парсинга JSON-узла
-        def parse_json_node(node):
-            if isinstance(node, dict):
-                ev_id = node.get("id") or node.get("eventId")
-                markets = node.get("markets") or node.get("outcomes")
-                if ev_id and markets:
-                    parsed = {}
-                    for m in markets:
-                        gn = m.get("groupName") or m.get("name") or "Другое"
-                        outs = []
-                        for out in (m.get("outcomes") or []):
-                            sn = out.get("shortName") or out.get("name")
-                            pr = out.get("probability") or out.get("odds") or out.get("price")
-                            if sn and pr: outs.append({"name": sn, "odds": pr})
-                        if outs: parsed[gn] = outs
-                    if parsed: odds_data[str(ev_id)] = parsed
-                for v in node.values(): parse_json_node(v)
-            elif isinstance(node, list):
-                for item in node: parse_json_node(item)
-
-        # 1. Слушаем XHR
         async def on_response(response):
             url = response.url
             if "api" in url or "graphql" in url:
-                try:
-                    if response.status == 200:
-                        ct = response.headers.get("content-type", "")
-                        if "application/json" in ct:
-                            data = await response.json()
-                            if isinstance(data, (dict, list)):
-                                captured_urls.add(url)
-                                if "event" in url:
-                                    print(f"   🔍 [XHR] {url}")
-                                parse_json_node(data)
-                except Exception:
-                    pass
+                if response.status == 200:
+                    ct = response.headers.get("content-type", "")
+                    if "application/json" in ct:
+                        captured_urls.add(url)
 
         page.on("response", on_response)
 
-        # 2. Слушаем WebSocket
-        def on_ws(ws):
-            print(f"   🔌 [WS] Подключен: {ws.url}")
-            def on_frame(payload):
-                try:
-                    data = json.loads(payload)
-                    parse_json_node(data)
-                except Exception:
-                    pass
-            ws.on("framereceived", on_frame)
-
-        page.on("websocket", on_ws)
-
-        # Открываем футбольный лайв
-        print("   📄 Открываю https://www.olimp.bet/live/futbol-1 ...")
+        # Открываем конкретный матч
+        match_url = f"https://www.olimp.bet/live/futbol-1/{ev_id}"
+        print(f"   📄 Открываю {match_url} ...")
         try:
-            await page.goto("https://www.olimp.bet/live/futbol-1", wait_until="domcontentloaded", timeout=45000)
+            await page.goto(match_url, wait_until="domcontentloaded", timeout=45000)
             print(f"   ✅ Страница загружена. URL={page.url}")
         except Exception as e:
             print(f"   ❌ Ошибка загрузки: {e}")
             await browser.close()
-            return {}
+            return set()
 
-        await asyncio.sleep(8) # Ждем прогрузки матчей
-
-        # Ищем ссылку на конкретный матч (обычно она содержит /live/futbol-1/<id> или <id>)
-        try:
-            links = await page.eval_on_selector_all(
-                "a[href*='/live/']",
-                "els => els.map(e => e.href).filter(h => /\\/live\\/[a-z-]+-\\d+\\/\\d+/.test(h))"
-            )
-            print(f"   🔗 Найдено матчей для клика: {len(links)}")
-
-            if links:
-                match_url = links[0]
-                print(f"   👉 Открываю матч: {match_url}")
-                await page.goto(match_url, wait_until="domcontentloaded", timeout=30000)
-                
-                # Ждем, пока прогрузятся все вкладки с рынками
-                await asyncio.sleep(15)
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(10)
-        except Exception as e:
-            print(f"   ⚠️ Ошибка при клике: {e}")
-
+        # Ждем, пока прогрузятся все вкладки с рынками
+        await asyncio.sleep(15)
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(5)
         await browser.close()
 
-    print(f"✅ Перехвачено API-запросов: {len(captured_urls)}")
-    print(f"✅ Получено рынков для {len(odds_data)} событий.")
-    return odds_data
-
-async def fetch_olimp_results():
-    print("📥 Загружаю результаты из Olimpbet...")
-    results_dict = {}
-    try:
-        data = fetch_olimp_matches(OLIMP_RESULTS_URL)
-        for sg in data:
-            sport = sg.get("payload", {}).get("sport", {})
-            if str(sport.get("id")) != "1": continue
-            comps = sg.get("payload", {}).get("competitionsWithEvents", [])
-            for comp in comps:
-                for ev in comp.get("events", []):
-                    ev_id = ev.get("id")
-                    if not ev_id: continue
-                    sc = ev.get("score")
-                    if isinstance(sc, dict):
-                        s1 = sc.get("team1") or sc.get("home")
-                        s2 = sc.get("team2") or sc.get("away")
-                        if s1 is not None and s2 is not None:
-                            results_dict[f"olimp_{ev_id}"] = {"score1": int(s1), "score2": int(s2)}
-    except Exception as e:
-        print(f"   ⚠️ Ошибка Olimpbet results: {e}")
-    return results_dict
-
-async def fetch_finished_matches(old_matches, new_match_ids):
-    print("📥 Ищу результаты завершенных матчей...")
-    finished_known = await firebase_get("finished_matches") or {}
-    if not isinstance(finished_known, dict): finished_known = {}
-
-    finished_dict = {}
-    now = time.time()
-    missing_ids = set()
-    for mid, match in old_matches.items():
-        if not isinstance(match, dict): continue
-        if mid in finished_known: continue
-        st = match.get("start_time")
-        is_old = st and (now > st + 7800)
-        if (mid not in new_match_ids and is_old) or (mid in new_match_ids and is_old):
-            missing_ids.add(mid)
-
-    if not missing_ids: return
-
-    print(f"🔍 Проверяю {len(missing_ids)} матчей на результат:")
-    for mid in missing_ids:
-        m = old_matches[mid]
-        st = m.get("start_time", 0)
-        age_h = round((now - st) / 3600, 1) if st else "?"
-        print(f"   • {m.get('title')} ({mid}) — прошло {age_h}ч")
-
-    olimp_results = await fetch_olimp_results()
-    for mid in missing_ids:
-        if mid in olimp_results:
-            finished_dict[mid] = olimp_results[mid]
-            print(f"   ✅ [Olimpbet] {mid}: {olimp_results[mid]['score1']}:{olimp_results[mid]['score2']}")
-
-    missing_after_olimp = missing_ids - set(finished_dict.keys())
-    if missing_after_olimp:
-        dates = {
-            time.strftime("%Y-%m-%d", time.localtime(now)),
-            time.strftime("%Y-%m-%d", time.localtime(now - 86400)),
-        }
-        tsdb_results = {}
-        async with httpx.AsyncClient() as client:
-            for d in dates:
-                try:
-                    r = await client.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={d}&s=Soccer", timeout=15)
-                    if r.status_code == 200:
-                        for ev in (r.json() or {}).get("events") or []:
-                            h = _normalize(ev.get("strHomeTeam", ""))
-                            a = _normalize(ev.get("strAwayTeam", ""))
-                            s1 = ev.get("intHomeScore"); s2 = ev.get("intAwayScore")
-                            if s1 is not None and s2 is not None:
-                                tsdb_results[f"{h}_{a}"] = {"score1": int(s1), "score2": int(s2)}
-                except Exception: pass
-
-        for mid in missing_after_olimp:
-            match = old_matches[mid]
-            h = _normalize(match.get("home", ""))
-            a = _normalize(match.get("away", ""))
-            if f"{h}_{a}" in tsdb_results:
-                finished_dict[mid] = tsdb_results[f"{h}_{a}"]
-                continue
-            elif f"{a}_{h}" in tsdb_results:
-                res = tsdb_results[f"{a}_{h}"]
-                finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
-                continue
-
-            match_score = match.get("score", "")
-            if ":" in match_score:
-                try:
-                    s1, s2 = [int(x.strip()) for x in match_score.split(":")]
-                    finished_dict[mid] = {"score1": s1, "score2": s2, "source": "match_score"}
-                    continue
-                except: pass
-
-            st = match.get("start_time")
-            if st and now > st + 9000:
-                finished_dict[mid] = {"void": True}
-
-    if finished_dict:
-        async with httpx.AsyncClient() as client:
-            await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
+    print(f"✅ Разведка завершена. Перехвачено запросов: {len(captured_urls)}")
+    return captured_urls
 
 async def firebase_get(path):
     try:
@@ -637,17 +475,9 @@ async def firebase_put(path, data):
     except Exception: return False
 
 async def main():
-    print("🔄 [Scraper] Запуск (rebrowser-playwright XHR+WS)...")
+    print("🔄 [Scraper] Запуск (rebrowser-playwright Разведчик)...")
 
-    ws_odds = await fetch_odds_via_playwright()
-
-    old_matches_dict = await firebase_get("matches") or {}
-    if not isinstance(old_matches_dict, dict): old_matches_dict = {}
-    finished_known = await firebase_get("finished_matches") or {}
-    if not isinstance(finished_known, dict): finished_known = {}
-    raw_cache = await firebase_get("team_logos") or {}
-    logo_cache = _cache_from_fb(raw_cache)
-
+    # 1. Получаем данные из REST
     live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
     line_data = fetch_olimp_matches(OLIMP_LINE_URL)
 
@@ -677,77 +507,21 @@ async def main():
     parse(line_data, "Скоро")
     print(f"⚽ Матчей для обработки: {len(all_matches)}")
 
-    missing = set()
-    for ev, _, league_name in all_matches:
-        for t in (ev.get("team1Name"), ev.get("team2Name")):
-            if not t: continue
-            hint = league_to_country(league_name) or ""
-            ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
-            if force: missing.add((t, league_name, force))
-
-    if missing:
-        teams_to_search = list({t for t, _, _ in missing})
-        name_en_map = batch_translate_ru_to_en(teams_to_search)
-        await search_all_logos(list(missing), logo_cache, name_en_map)
-        await firebase_put("team_logos", _cache_to_fb(logo_cache))
-        if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
-
-    matches_dict = {}
-    for ev, status_type, league_name in all_matches:
-        ev_id = ev.get("id")
-        mid = f"olimp_{ev_id}"
-        if mid in finished_known: continue
-
-        t1 = ev.get("team1Name"); t2 = ev.get("team2Name")
-        hint = league_to_country(league_name) or ""
-        hl = find_logo(logo_cache, t1, hint)
-        al = find_logo(logo_cache, t2, hint)
-
-        p1 = px = p2 = None
-        markets_data = {}
-
-        for out in ev.get("outcomes", []):
-            gn = out.get("groupName", "Другое").strip()
-            sn = out.get("shortName", "").strip()
-            prob = out.get("probability")
-            if prob is None or not sn: continue
-            if gn not in markets_data: markets_data[gn] = []
-            markets_data[gn].append({"name": sn, "odds": prob})
-            if "Исход" in gn or "Результат" in gn:
-                if sn in ["П1", "1"]: p1 = prob
-                elif sn in ["X", "Х"]: px = prob
-                elif sn in ["П2", "2"]: p2 = prob
-
-        if str(ev_id) in ws_odds:
-            for gn, outs in ws_odds[str(ev_id)].items():
-                markets_data[gn] = outs
-
-        score = "VS"; status_str = status_type
-        if status_type == "LIVE":
-            sc, mn = extract_live_score_and_time(ev)
-            if sc: score = sc
-            status_str = build_status("LIVE", mn)
-
-        time_display = status_str
-        if status_type == "Скоро":
-            st = ev.get("startDateTime")
-            if st: time_display = time.strftime("%d.%m %H:%M", time.localtime(st))
-
-        matches_dict[mid] = {
-            "title": f"{t1} - {t2}", "home": t1, "away": t2,
-            "homeLogo": hl, "awayLogo": al, "league": league_name,
-            "status": time_display, "score": score,
-            "start_time": ev.get("startDateTime"),
-            "odds": {"1": p1, "X": px, "2": p2},
-            "markets": markets_data
-        }
-
-    if matches_dict:
-        await firebase_put("matches", matches_dict)
-        print(f"🔥 Сохранено {len(matches_dict)} матчей")
-
-    await fetch_finished_matches(old_matches_dict, set(matches_dict.keys()))
+    # 2. РАЗВЕДКА: берём первый LIVE-матч и смотрим, какие запросы шлёт сайт
+    live_matches = [m for m in all_matches if m[1] == "LIVE"]
+    if live_matches:
+        test_ev_id = live_matches[0][0].get("id")
+        captured_urls = await fetch_odds_via_playwright(test_ev_id)
+        if captured_urls:
+            print("\n🚨 ВНИМАНИЕ! Вот список всех эндпоинтов, которые сайт вызывал при открытии матча:")
+            for u in captured_urls:
+                if "sport" in u or "event" in u or "market" in u or "odds" in u:
+                    print(f"👉 {u}")
+            print("\nСкинь мне эти ссылки, и я сразу напишу прямой парсер без Playwright!\n")
+        else:
+            print("❌ Не удалось перехватить ни одного запроса с JSON.")
+    else:
+        print("⚠️ Нет LIVE-матчей для разведки. Ждём появления.")
 
 if __name__ == "__main__":
     asyncio.run(main())
