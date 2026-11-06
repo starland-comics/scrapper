@@ -11,8 +11,8 @@ concurrency:
 
 jobs:
   scrape:
-    runs-on: ubuntu-22.04    # 22.04 стабильнее для Playwright
-    timeout-minutes: 20      # Увеличенный таймаут для первого запуска
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -42,5 +42,5 @@ jobs:
 
       - name: Run Scraper
         env:
-          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+          DO_RECON: '1'   # 👈 ОДИН РАЗ поставь '1' для разведки, потом поменяй на '0'
         run: python -u scraper.py
