@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 import base64
+import uuid
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
@@ -20,7 +21,8 @@ PINNACLE_HEADERS = {
     "Accept": "application/json",
     "Origin": "https://www.pinnacle.com",
     "Referer": "https://www.pinnacle.com/",
-    "X-API-Key": "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R"
+    "X-API-Key": "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R",
+    "X-Device-UUID": str(uuid.uuid4())
 }
 
 FOTMOB_HEADERS = {
@@ -419,6 +421,9 @@ async def fetch_pinnacle_data(endpoint):
             r = await client.get(url, headers=PINNACLE_HEADERS, timeout=30)
             if r.status_code == 200:
                 return r.json()
+            elif r.status_code == 403:
+                print(f"   ❌ Pinnacle 403 Forbidden для {endpoint}. Возможно, ключ устарел или IP заблокирован.")
+                return None
             elif r.status_code == 429:
                 print("   ⚠️ Pinnacle rate limit (429). Ждем...")
                 return None
