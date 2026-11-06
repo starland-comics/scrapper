@@ -430,11 +430,10 @@ async def fetch_odds_via_playwright():
             viewport={"width": 1920, "height": 1080}
         )
         page = await context.new_page()
-        # stealth_async(page) - УДАЛЕНО, так как rebrowser уже патчит всё сам
 
         async def on_response(response):
             url = response.url
-            if "api" in url or "graphql" in url or "json" in url:
+            if "api" in url or "graphql" in url:
                 try:
                     if response.status == 200:
                         ct = response.headers.get("content-type", "")
@@ -442,6 +441,8 @@ async def fetch_odds_via_playwright():
                             data = await response.json()
                             if isinstance(data, (dict, list)):
                                 captured_urls.add(url)
+                                if any(k in url for k in ["event", "market", "odds"]):
+                                    print(f"   🔍 [URL] {url}")
                                 def parse_node(node):
                                     if isinstance(node, dict):
                                         ev_id = node.get("id") or node.get("eventId")
@@ -472,16 +473,34 @@ async def fetch_odds_via_playwright():
             print(f"   ✅ Страница загружена. URL={page.url}")
         except Exception as e:
             print(f"   ❌ Ошибка загрузки: {e}")
+            await browser.close()
+            return {}
 
-        await asyncio.sleep(15)
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         await asyncio.sleep(10)
+
+        # Ищем первую ссылку на матч и переходим
+        try:
+            links = await page.eval_on_selector_all(
+                "a[href*='live']",
+                "els => els.map(e => e.href).filter(h => h && !h.endsWith('/live'))"
+            )
+            print(f"   🔗 Найдено {len(links)} ссылок для клика. Примеры: {links[:5]}")
+
+            if links:
+                match_url = links[0]
+                print(f"   👉 Открываю матч: {match_url}")
+                await page.goto(match_url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(15)
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(10)
+        except Exception as e:
+            print(f"   ⚠️ Ошибка при клике: {e}")
 
         await browser.close()
 
     print(f"✅ Перехвачено API-запросов: {len(captured_urls)}")
     if captured_urls:
-        print(f"🔗 Примеры URL: {list(captured_urls)[:5]}")
+        print(f"🔗 Все URL: {list(captured_urls)}")
     print(f"✅ Получено рынков для {len(odds_data)} событий.")
     return odds_data
 
