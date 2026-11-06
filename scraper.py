@@ -557,12 +557,6 @@ async def firebase_put(path, data):
             return r.status_code == 200
     except Exception: return False
 
-async def firebase_delete(path):
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.delete(f"{FIREBASE_DB_URL}/{path}.json", timeout=15.0)
-    except Exception: pass
-
 async def main():
     print("🔄 [Scraper] Запуск...")
 
@@ -642,8 +636,8 @@ async def main():
             continue
 
         st = old_m.get("start_time", 0)
-        if st and now_ts > st + 14400: # больше 4 часов
-            print(f"   🗑 Удаляю старый LIVE (>4ч) из базы: {old_m.get('title')}")
+        if st and now_ts > st + 10800:
+            print(f"   🗑 Удаляю старый LIVE (>3ч) из базы: {old_m.get('title')}")
             continue
 
         stale_live_matches.append((mid, old_m))
