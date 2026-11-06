@@ -10,14 +10,20 @@ import base64
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
-DO_RECON = os.environ.get("DO_RECON", "0") == "1"
-
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
 OLIMP_LIVE_URL = "https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events"
 OLIMP_LINE_URL = "https://www.olimp.bet/api/v4/0/line/top/sports-with-competitions-with-events"
 OLIMP_RESULTS_URL = "https://www.olimp.bet/api/v4/0/results/sports-with-competitions-with-events"
+SOFASCORE_API = "https://api.sofascore.com/api/v1"
 FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
 TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
+
+SOFASCORE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Referer": "https://www.sofascore.com/",
+    "Origin": "https://www.sofascore.com",
+}
 
 FOTMOB_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -320,6 +326,7 @@ async def search_all_logos(teams_with_league, cache, name_en_map):
                 LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team)
     await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
+# ====== ОБРАБОТКА СЧЁТА И МИНУТЫ (без бага с 0) ======
 def _safe_get_first(d, keys):
     if not isinstance(d, dict): return None
     for k in keys:
@@ -359,7 +366,7 @@ def extract_live_score_and_time(ev):
         if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
     elif isinstance(sc, (list, tuple)) and len(sc) >= 2:
         if sc[0] is not None and sc[1] is not None: score = f"{sc[0]} : {sc[1]}"
-    elif isinstance(sc, str) and ":" in sc: 
+    elif isinstance(sc, str) and ":" in sc:
         score = sc
     if not score:
         s1 = _safe_get_first(ev, ["score1", "homeScore", "team1Score"])
@@ -429,6 +436,167 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
+# ====== SOFASCORE: события и кэфы ======
+async def fetch_sofascore_events():
+    all_events = []
+    print("📥 Загружаю события Sofascore...")
+    
+    # Live
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{SOFASCORE_API}/sport/football/live-events", headers=SOFASCORE_HEADERS, timeout=20)
+            if r.status_code == 200:
+                data = r.json()
+                events = data.get("events", [])
+                for ev in events:
+                    all_events.append({
+                        "id": ev.get("id"),
+                        "home": ev.get("homeTeam", {}).get("name", ""),
+                        "away": ev.get("awayTeam", {}).get("name", ""),
+                        "tournament": ev.get("tournament", {}).get("name", ""),
+                        "start": ev.get("startTimestamp"),
+                        "is_live": True,
+                    })
+                print(f"   ✅ Sofascore LIVE: {len(events)}")
+            else:
+                print(f"   ⚠️ Sofascore LIVE: HTTP {r.status_code}")
+    except Exception as e:
+        print(f"   ⚠️ Sofascore LIVE exception: {e}")
+    
+    # Scheduled (сегодня + завтра + послезавтра)
+    for offset in [0, 1, 2]:
+        d = time.strftime("%Y-%m-%d", time.localtime(time.time() + offset * 86400))
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(f"{SOFASCORE_API}/sport/football/scheduled-events/{d}", headers=SOFASCORE_HEADERS, timeout=20)
+                if r.status_code == 200:
+                    data = r.json()
+                    events = data.get("events", [])
+                    cnt = 0
+                    for ev in events:
+                        status_type = ev.get("status", {}).get("type", "")
+                        if status_type in ("finished", "canceled", "postponed"): continue
+                        all_events.append({
+                            "id": ev.get("id"),
+                            "home": ev.get("homeTeam", {}).get("name", ""),
+                            "away": ev.get("awayTeam", {}).get("name", ""),
+                            "tournament": ev.get("tournament", {}).get("name", ""),
+                            "start": ev.get("startTimestamp"),
+                            "is_live": False,
+                        })
+                        cnt += 1
+                    print(f"   ✅ Sofascore {d}: {cnt}")
+                else:
+                    print(f"   ⚠️ Sofascore {d}: HTTP {r.status_code}")
+        except Exception as e:
+            print(f"   ⚠️ Sofascore {d} exception: {e}")
+    
+    return all_events
+
+
+async def fetch_sofascore_odds(event_id):
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{SOFASCORE_API}/event/{event_id}/odds/1/all", headers=SOFASCORE_HEADERS, timeout=15)
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return None
+
+
+def parse_sofascore_odds(odds_data):
+    """Парсит кэфы Sofascore в формат {group: [{name, odds}]}"""
+    markets = {}
+    if not odds_data or not isinstance(odds_data, dict): return markets
+    
+    raw_markets = odds_data.get("markets") or []
+    
+    for m in raw_markets:
+        m_name = (m.get("name") or "").strip()
+        m_group = (m.get("group") or m_name).strip()
+        mlow = (m_name + " " + m_group).lower()
+        
+        group_name = None
+        if any(x in mlow for x in ["1x2", "full time result", "match winner", "winner (1x2)"]):
+            group_name = "Исход"
+        elif "both teams to score" in mlow or "btts" in mlow:
+            group_name = "Обе забьют"
+        elif "double chance" in mlow:
+            group_name = "Двойной шанс"
+        elif "total" in mlow and "corner" not in mlow and "card" not in mlow and "booking" not in mlow:
+            group_name = "Тотал"
+        elif "handicap" in mlow and "corner" not in mlow and "card" not in mlow:
+            group_name = "Фора"
+        
+        if not group_name: continue
+        if group_name not in markets: markets[group_name] = []
+        
+        choices = m.get("choices") or []
+        for choice in choices:
+            c_name = (choice.get("name") or "").strip()
+            decimal = choice.get("decimalValue") or choice.get("decimal")
+            if decimal is None:
+                frac = choice.get("fractionalValue")
+                if frac and "/" in frac:
+                    try:
+                        a, b = frac.split("/")
+                        decimal = round(float(a) / float(b) + 1, 2)
+                    except: pass
+            if decimal is None: continue
+            try: decimal = float(decimal)
+            except: continue
+            if decimal <= 1.0 or decimal > 100: continue
+            
+            final_name = c_name
+            if group_name == "Исход":
+                if c_name == "1": final_name = "П1"
+                elif c_name in ["X", "x"]: final_name = "Х"
+                elif c_name == "2": final_name = "П2"
+            elif group_name == "Обе забьют":
+                if c_name.lower() == "yes": final_name = "Да"
+                elif c_name.lower() == "no": final_name = "Нет"
+            elif group_name == "Тотал":
+                mlow_c = c_name.lower()
+                if "over" in mlow_c:
+                    num = re.search(r'(\d+(?:\.\d+)?)', c_name)
+                    if num:
+                        val = num.group(1)
+                        if "." in val and not val.endswith(".5") and not val.endswith(".0"): continue
+                        final_name = f"ТБ {val}"
+                elif "under" in mlow_c:
+                    num = re.search(r'(\d+(?:\.\d+)?)', c_name)
+                    if num:
+                        val = num.group(1)
+                        if "." in val and not val.endswith(".5") and not val.endswith(".0"): continue
+                        final_name = f"ТМ {val}"
+            elif group_name == "Фора":
+                m1 = re.match(r'^1\s*\(?([+-]?\d+(?:\.\d+)?)\)?', c_name)
+                m2 = re.match(r'^2\s*\(?([+-]?\d+(?:\.\d+)?)\)?', c_name)
+                if m1: final_name = f"Ф1 {m1.group(1)}"
+                elif m2: final_name = f"Ф2 {m2.group(1)}"
+            
+            markets[group_name].append({"name": final_name, "odds": decimal})
+    
+    return markets
+
+
+async def fetch_all_sofascore_odds(event_ids):
+    """Параллельно запрашивает кэфы для всех event_ids с ограничением"""
+    sem = asyncio.Semaphore(5)
+    result = {}
+    
+    async def one(eid):
+        async with sem:
+            await asyncio.sleep(0.05)
+            odds = await fetch_sofascore_odds(eid)
+            if odds: result[eid] = odds
+    
+    await asyncio.gather(*(one(eid) for eid in event_ids))
+    return result
+
+
+# ====== Результаты ======
 async def fetch_olimp_results():
     print("📥 Загружаю результаты из Olimpbet...")
     results_dict = {}
@@ -452,6 +620,7 @@ async def fetch_olimp_results():
         print(f"   ⚠️ Ошибка Olimpbet results: {e}")
     return results_dict
 
+
 async def fetch_finished_matches(old_matches, new_match_ids):
     print("📥 Ищу результаты завершенных матчей...")
     finished_known = await firebase_get("finished_matches") or {}
@@ -473,11 +642,6 @@ async def fetch_finished_matches(old_matches, new_match_ids):
         return
 
     print(f"🔍 Проверяю {len(missing_ids)} матчей на результат:")
-    for mid in missing_ids:
-        m = old_matches[mid]
-        st = m.get("start_time", 0)
-        age_h = round((now - st) / 3600, 1) if st else "?"
-        print(f"   • {m.get('title')} ({mid}) — прошло {age_h}ч")
 
     olimp_results = await fetch_olimp_results()
     for mid in missing_ids:
@@ -511,12 +675,10 @@ async def fetch_finished_matches(old_matches, new_match_ids):
             a = _normalize(match.get("away", ""))
             if f"{h}_{a}" in tsdb_results:
                 finished_dict[mid] = tsdb_results[f"{h}_{a}"]
-                print(f"   ✅ [TSDB] {match.get('title')}: {finished_dict[mid]['score1']}:{finished_dict[mid]['score2']}")
                 continue
             elif f"{a}_{h}" in tsdb_results:
                 res = tsdb_results[f"{a}_{h}"]
                 finished_dict[mid] = {"score1": res["score2"], "score2": res["score1"]}
-                print(f"   ✅ [TSDB rev] {match.get('title')}: {finished_dict[mid]['score1']}:{finished_dict[mid]['score2']}")
                 continue
 
             match_score = match.get("score", "")
@@ -534,9 +696,9 @@ async def fetch_finished_matches(old_matches, new_match_ids):
                 print(f"   💀 [VOID] {match.get('title')} — прошло >2.5ч, счёта нет")
 
     if finished_dict:
-        print(f"✅ Записываю {len(finished_dict)} результатов в finished_matches")
         async with httpx.AsyncClient() as client:
             await client.patch(f"{FIREBASE_DB_URL}/finished_matches.json", json=finished_dict, timeout=30.0)
+
 
 async def firebase_get(path):
     try:
@@ -551,128 +713,10 @@ async def firebase_put(path, data):
             return r.status_code == 200
     except Exception: return False
 
-# ====== РАЗВЕДКА (DO_RECON=1) ======
-async def run_recon(ev_id):
-    """
-    Пробует напрямую дёрнуть кучу URL с eventId + слушает WS на странице матча.
-    """
-    from rebrowser_playwright.async_api import async_playwright
-    
-    print(f"\n🧪 [RECON] Прямой перебор URL для события {ev_id}:\n")
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": f"https://www.olimp.bet/live/futbol-1/{ev_id}",
-        "Origin": "https://www.olimp.bet",
-    }
-    
-    test_urls = [
-        f"https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events?vids%5B%5D=1%3A{ev_id}",
-        f"https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events?eventIds%5B%5D={ev_id}",
-        f"https://www.olimp.bet/api/v4/0/live/sports-with-competitions-with-events?eventId={ev_id}",
-        f"https://www.olimp.bet/api/v4/0/live/events/{ev_id}",
-        f"https://www.olimp.bet/api/v4/0/live/events/{ev_id}/markets",
-        f"https://www.olimp.bet/api/v4/0/live/event/{ev_id}/markets",
-        f"https://www.olimp.bet/api/v4/0/live/events-with-markets/{ev_id}",
-        f"https://www.olimp.bet/api/v4/0/live/event-with-markets/{ev_id}",
-        f"https://www.olimp.bet/api/v4/0/events/{ev_id}",
-        f"https://www.olimp.bet/api/v4/0/events/{ev_id}/markets",
-        f"https://www.olimp.bet/api/v4/0/markets/event/{ev_id}",
-        f"https://www.olimp.bet/api/v4/0/live/markets?eventId={ev_id}",
-        f"https://www.olimp.bet/api/v4/0/live/events-with-markets?vids%5B%5D=1%3A{ev_id}",
-        f"https://www.olimp.bet/api/v4/0/line/sports-with-competitions-with-events?vids%5B%5D=1%3A{ev_id}",
-    ]
-    
-    for u in test_urls:
-        try:
-            r = cffi_requests.get(u, headers=headers, impersonate="chrome120", timeout=10)
-            preview = r.text[:500] if r.text else ""
-            has_markets = any(x in preview.lower() for x in ['"outcomes"', '"markets"', '"total"', '"handicap"', '"spread"'])
-            status_mark = "✅" if r.status_code == 200 else "❌"
-            markets_mark = "📊" if has_markets else "—"
-            print(f"   {status_mark}{markets_mark} [{r.status_code}] {u}")
-            if r.status_code == 200:
-                print(f"      → {preview[:200]}")
-        except Exception as e:
-            print(f"   ❌ ERR {u} → {str(e)[:100]}")
-    
-    # Теперь Playwright — слушаем WS на странице матча
-    print(f"\n🔌 [RECON] Playwright: слушаем WS на странице матча {ev_id}...\n")
-    
-    ws_messages = []
-    xhr_urls = set()
-    
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080}
-        )
-        page = await context.new_page()
-        
-        async def on_response(response):
-            url = response.url
-            if response.status == 200 and "api" in url and "json" in response.headers.get("content-type", ""):
-                xhr_urls.add(url)
-        
-        page.on("response", on_response)
-        
-        def on_ws(ws):
-            print(f"   🔌 [WS] Подключён: {ws.url}")
-            def on_frame(payload):
-                try:
-                    s = payload if isinstance(payload, str) else payload.decode("utf-8", errors="ignore")
-                    if len(s) > 50:
-                        ws_messages.append(s[:500])
-                except: pass
-            ws.on("framereceived", on_frame)
-        
-        page.on("websocket", on_ws)
-        
-        try:
-            await page.goto(f"https://www.olimp.bet/live/futbol-1/{ev_id}", wait_until="domcontentloaded", timeout=45000)
-            await asyncio.sleep(20)
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(10)
-        except Exception as e:
-            print(f"   ❌ Ошибка: {e}")
-        
-        await browser.close()
-    
-    print(f"\n📡 [RECON] XHR URL после открытия страницы матча:")
-    for u in sorted(xhr_urls):
-        print(f"👉 {u}")
-    
-    print(f"\n📨 [RECON] Получено WS-сообщений: {len(ws_messages)}")
-    for i, m in enumerate(ws_messages[:10]):
-        print(f"   [{i}] {m}")
-    print()
 
 async def main():
-    if DO_RECON:
-        print("🕵️ Запуск в режиме РАЗВЕДКИ...")
-        live_data = fetch_olimp_matches(OLIMP_LIVE_URL)
-        ev_id = None
-        for sg in live_data:
-            sport = sg.get("payload", {}).get("sport", {})
-            if str(sport.get("id")) != "1": continue
-            for comp in sg.get("payload", {}).get("competitionsWithEvents", []):
-                for ev in comp.get("events", []):
-                    t1 = ev.get("team1Name", ""); t2 = ev.get("team2Name", "")
-                    if t1 and t2:
-                        ev_id = ev.get("id")
-                        break
-                if ev_id: break
-            if ev_id: break
-        if not ev_id:
-            print("❌ Нет live-матчей для разведки.")
-            return
-        await run_recon(ev_id)
-        return
-
-    print("🔄 [Scraper] Запуск (обычный режим)...")
-
+    print("🔄 [Scraper] Запуск (Olimpbet + Sofascore)...")
+    
     old_matches_dict = await firebase_get("matches") or {}
     if not isinstance(old_matches_dict, dict): old_matches_dict = {}
     finished_known = await firebase_get("finished_matches") or {}
@@ -687,7 +731,7 @@ async def main():
     all_matches = []
     now_ts = time.time()
 
-    def parse(data, status_type):
+    def parse_olimp(data, status_type):
         count = 0
         for sg in data:
             sport = sg.get("payload", {}).get("sport", {})
@@ -706,9 +750,9 @@ async def main():
                         count += 1
         return count
 
-    live_count = parse(live_data, "LIVE")
-    line_count = parse(line_data, "Скоро")
-    print(f"⚽ LIVE: {live_count} | Скоро: {line_count}")
+    live_count = parse_olimp(live_data, "LIVE")
+    line_count = parse_olimp(line_data, "Скоро")
+    print(f"⚽ Olimpbet LIVE: {live_count} | Скоро: {line_count}")
 
     unique_matches = {}
     for ev, status_type, league_name in all_matches:
@@ -719,9 +763,58 @@ async def main():
                 unique_matches[ev_id] = (ev, status_type, league_name)
         else:
             unique_matches[ev_id] = (ev, status_type, league_name)
-    
-    print(f"🎯 Уникальных матчей: {len(unique_matches)}")
 
+    print(f"🎯 Уникальных матчей Olimpbet: {len(unique_matches)}")
+
+    # Sofascore events
+    sofascore_events = await fetch_sofascore_events()
+    print(f"📊 Sofascore событий: {len(sofascore_events)}")
+
+    # Перевод названий команд Olimpbet RU→EN
+    teams_ru = set()
+    for ev, _, _ in unique_matches.values():
+        if ev.get("team1Name"): teams_ru.add(ev.get("team1Name"))
+        if ev.get("team2Name"): teams_ru.add(ev.get("team2Name"))
+    print(f"🔤 Перевожу {len(teams_ru)} названий команд...")
+    name_en_map = batch_translate_ru_to_en(list(teams_ru))
+
+    # Матчим Olimpbet ↔ Sofascore
+    match_to_sf = {}
+    for ev_id, (ev, status_type, league_name) in unique_matches.items():
+        t1_ru = ev.get("team1Name", "")
+        t2_ru = ev.get("team2Name", "")
+        t1_en = name_en_map.get(t1_ru, t1_ru)
+        t2_en = name_en_map.get(t2_ru, t2_ru)
+        
+        best = None
+        best_score = 0
+        for se in sofascore_events:
+            h = se["home"]
+            a = se["away"]
+            if not h or not a: continue
+            s1 = fuzz.token_set_ratio(t1_en.lower(), h.lower())
+            s2 = fuzz.token_set_ratio(t2_en.lower(), a.lower())
+            if s1 < 75 or s2 < 75: continue
+            combined = s1 + s2
+            if combined > best_score:
+                best_score = combined
+                best = se
+        
+        if best and best_score >= 160:
+            match_to_sf[ev_id] = best["id"]
+
+    print(f"🔗 Совпадений Olimpbet ↔ Sofascore: {len(match_to_sf)}/{len(unique_matches)}")
+
+    # Загружаем кэфы из Sofascore
+    print(f"📥 Загружаю кэфы из Sofascore для {len(match_to_sf)} матчей...")
+    t0 = time.time()
+    sf_odds_map = await fetch_all_sofascore_odds(list(match_to_sf.values()))
+    print(f"✅ Кэфы получены для {len(sf_odds_map)}/{len(match_to_sf)} за {time.time()-t0:.1f}s")
+
+    # Обратная карта: sofascore_id → olimpbet_ev_id
+    sf_to_olimp = {sf_id: ev_id for ev_id, sf_id in match_to_sf.items()}
+
+    # Логотипы
     missing = set()
     for ev, _, league_name in unique_matches.values():
         for t in (ev.get("team1Name"), ev.get("team2Name")):
@@ -733,16 +826,15 @@ async def main():
 
     if missing:
         print(f"🔎 Поиск логотипов для {len(missing)} пар...")
-        teams_to_search = list({t for t, _, _ in missing})
-        name_en_map = batch_translate_ru_to_en(teams_to_search)
-        t0 = time.time()
         await search_all_logos(list(missing), logo_cache, name_en_map)
-        print(f"✅ Логотипы обработаны за {time.time()-t0:.1f}s")
         await firebase_put("team_logos", _cache_to_fb(logo_cache))
         if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
+    # Собираем matches_dict
     matches_dict = {}
-    live_with_score = 0
+    with_full_markets = 0
+    with_only_base = 0
+    
     for ev, status_type, league_name in unique_matches.values():
         ev_id = ev.get("id")
         mid = f"olimp_{ev_id}"
@@ -756,6 +848,7 @@ async def main():
         p1 = px = p2 = None
         markets_data = {}
 
+        # Базовые П1/Х/П2 из Olimpbet
         for out in ev.get("outcomes", []):
             gn = out.get("groupName", "Другое").strip()
             sn = out.get("shortName", "").strip()
@@ -768,18 +861,37 @@ async def main():
                 elif sn in ["X", "Х"]: px = prob
                 elif sn in ["П2", "2"]: p2 = prob
 
+        # Полная роспись из Sofascore
+        sf_id = match_to_sf.get(ev_id)
+        if sf_id and sf_id in sf_odds_map:
+            sf_markets = parse_sofascore_odds(sf_odds_map[sf_id])
+            if sf_markets:
+                # Мерж: если Sofascore дал "Исход" — используем его (более свежие кэфы)
+                for gn, outs in sf_markets.items():
+                    if outs:
+                        markets_data[gn] = outs
+                with_full_markets += 1
+                
+                # Обновляем p1/px/p2 из Sofascore "Исход"
+                if "Исход" in sf_markets:
+                    for o in sf_markets["Исход"]:
+                        if o["name"] == "П1": p1 = o["odds"]
+                        elif o["name"] == "Х": px = o["odds"]
+                        elif o["name"] == "П2": p2 = o["odds"]
+        else:
+            if p1 or px or p2:
+                with_only_base += 1
+
         score = "VS"; status_str = status_type
         if status_type == "LIVE":
             sc, mn = extract_live_score_and_time(ev)
-            if sc: 
-                score = sc
-                live_with_score += 1
+            if sc: score = sc
             status_str = build_status("LIVE", mn)
 
         time_display = status_str
         if status_type == "Скоро":
             st = ev.get("startDateTime")
-            if isinstance(st, (int, float)): 
+            if isinstance(st, (int, float)):
                 time_display = time.strftime("%d.%m %H:%M", time.localtime(st))
 
         matches_dict[mid] = {
@@ -791,13 +903,15 @@ async def main():
             "markets": markets_data
         }
 
-    print(f"🎯 LIVE-матчей со счётом: {live_with_score}")
+    print(f"✅ С полной росписью (Sofascore): {with_full_markets}")
+    print(f"⚠️  Только базовые П1/Х/П2 (Olimpbet): {with_only_base}")
 
     if matches_dict:
         await firebase_put("matches", matches_dict)
         print(f"🔥 Сохранено {len(matches_dict)} матчей")
 
     await fetch_finished_matches(old_matches_dict, set(matches_dict.keys()))
+
 
 if __name__ == "__main__":
     asyncio.run(main())
