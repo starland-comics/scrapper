@@ -2,17 +2,17 @@ name: WinStars Scraper
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # Каждые 5 минут
-  workflow_dispatch:         # Кнопка ручного запуска
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 concurrency:
   group: scraper
-  cancel-in-progress: false  # Не убиваем текущий, ждём завершения
+  cancel-in-progress: false
 
 jobs:
   scrape:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,21 +26,5 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Cache rebrowser-playwright
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: rebrowser-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-
-      - name: Install rebrowser system deps
-        run: rebrowser_playwright install-deps chromium
-
-      - name: Install rebrowser Chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: rebrowser_playwright install chromium
-
       - name: Run Scraper
-        env:
-          DO_RECON: '1'   # 👈 ОДИН РАЗ поставь '1' для разведки, потом поменяй на '0'
         run: python -u scraper.py
