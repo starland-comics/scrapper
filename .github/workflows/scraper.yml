@@ -2,17 +2,17 @@ name: WinStars Scraper
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # Каждые 5 минут
-  workflow_dispatch:         # Кнопка ручного запуска
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 concurrency:
   group: scraper
-  cancel-in-progress: false  # Не убиваем текущий, ждём завершения
+  cancel-in-progress: false
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-22.04   # 22.04 стабильнее для Playwright, чем latest (24.04)
+    timeout-minutes: 20     # Увеличиваем запас — первый прогон долгий
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,11 +23,21 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Cache Playwright Chromium
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-v1
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
+
       - name: Install Playwright Chromium
-        run: playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps chromium-headless-shell
 
       - name: Run Scraper
         env:
