@@ -1,6 +1,5 @@
-httpx
-curl_cffi
-requests
-rapidfuzz
 playwright==1.45.0
 playwright-stealth==1.0.6
+httpx
+curl_cffi
+rapidfuzz
