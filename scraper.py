@@ -685,7 +685,6 @@ async def main():
                 markets_data[gn] = []
             markets_data[gn].append({"name": sn, "odds": prob})
 
-            # Заполняем основные П1 Х П2 для главного экрана
             if "Исход" in gn or "Результат" in gn:
                 if sn in ["П1", "1"]: p1 = prob
                 elif sn in ["X", "Х", "Ничья"]: px = prob
