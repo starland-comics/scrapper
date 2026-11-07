@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 import base64
+from collections import Counter, defaultdict
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
@@ -390,6 +391,41 @@ def _build_sport_hierarchy(all_sports):
     for sp_id in entry_by_id: top_by_id[sp_id] = find_top(sp_id)
     return entry_by_id, parent_by_id, top_by_id
 
+# ============ ПРОВЕРКА ЭНДПОИНТА ПОЛНОЙ ЛИНИИ ============
+
+def probe_full_markets_endpoint(ev_id):
+    """Пробует несколько эндпоинтов для получения полной росписи события."""
+    test_urls = [
+        f"{FONBET_BASE}/events/{ev_id}/markets?lang=ru",
+        f"{FONBET_BASE}/events/{ev_id}?lang=ru",
+        f"{FONBET_BASE}/event/{ev_id}?lang=ru",
+        f"{FONBET_BASE}/events/all/{ev_id}?lang=ru",
+        f"{FONBET_BASE}/events/listBase?eventIds={ev_id}&scopeMarket=1600&lang=ru",
+        f"{FONBET_BASE}/events/listBase?eventIds={ev_id}&scopeMarket=1&lang=ru",
+        f"{FONBET_BASE}/events/list?eventIds={ev_id}&lang=ru",
+    ]
+    results = {}
+    for url in test_urls:
+        try:
+            r = cffi_requests.get(url, headers=FONBET_HEADERS, impersonate="chrome120", timeout=10)
+            preview = r.text[:300] if r.text else ""
+            results[url] = {"status": r.status_code, "preview": preview}
+            marker = "✅" if r.status_code == 200 else "❌"
+            print(f"   {marker} [{r.status_code}] {url}")
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                    # Считаем сколько факторов пришло
+                    if isinstance(data, dict):
+                        fact_count = len(data.get("factors", [])) + len(data.get("customFactors", []))
+                        ev_count = len(data.get("events", []))
+                        print(f"      → JSON: events={ev_count}, factors={fact_count}")
+                except: pass
+        except Exception as e:
+            results[url] = {"error": str(e)[:100]}
+            print(f"   ❌ ERR {url} → {str(e)[:80]}")
+    return results
+
 # ============ FIREBASE ============
 
 async def firebase_get(path):
@@ -409,7 +445,7 @@ async def firebase_put(path, data):
 
 async def main():
     t0 = time.time()
-    print("🔄 [Scraper] Запуск (Fonbet — только логотипы)...")
+    print("🔄 [Scraper] Запуск (Fonbet — проверка эндпоинтов)...")
     
     now_ts = int(time.time())
     seven_days = 7 * 86400
@@ -419,6 +455,7 @@ async def main():
     team_logo_idx = build_team_logo_index(logo_cache)
     print(f"📥 В кэше логотипов: {len(logo_cache)} (уникальных: {len(team_logo_idx)})")
     
+    # === 1. Загружаем listBase (prematch) и list (live) ===
     line_data = fetch_fonbet_data(FONBET_BASE + FONBET_LINE_PATH)
     live_data = fetch_fonbet_data(FONBET_BASE + FONBET_LIVE_PATH)
     
@@ -427,13 +464,24 @@ async def main():
         return
     
     events_by_id = {}
+    all_factors = {}
     all_sports = []
     
     for data in [line_data, live_data]:
         if not data: continue
         events = data.get("events", [])
+        factors_raw = data.get("factors", [])
+        custom_factors_raw = data.get("customFactors", [])
         sports_list = data.get("sports", [])
+        
         all_sports.extend(sports_list)
+        for f in factors_raw:
+            eid = f.get("e")
+            if eid: all_factors.setdefault(eid, []).append(f)
+        for cf in custom_factors_raw:
+            eid = cf.get("e")
+            if eid: all_factors.setdefault(eid, []).extend(cf.get("factors", []))
+        
         for ev in events:
             eid = ev.get("id")
             if eid and eid not in events_by_id:
@@ -472,19 +520,52 @@ async def main():
     
     print(f"🎯 Валидных матчей: {len(valid_events)}")
     
+    # === 2. Показываем распределение по количеству факторов ===
+    print(f"\n📊 Распределение матчей по количеству факторов:")
+    factor_buckets = Counter()
+    for ev, lg in valid_events:
+        eid = ev.get("id")
+        cnt = len(all_factors.get(eid, []))
+        if cnt >= 100: factor_buckets["100+"] += 1
+        elif cnt >= 50: factor_buckets["50-99"] += 1
+        elif cnt >= 20: factor_buckets["20-49"] += 1
+        elif cnt >= 10: factor_buckets["10-19"] += 1
+        else: factor_buckets["<10"] += 1
+    for bucket in ["100+", "50-99", "20-49", "10-19", "<10"]:
+        if factor_buckets.get(bucket):
+            print(f"   {bucket}: {factor_buckets[bucket]} матчей")
+    
+    # Показываем конкретно матч с малым числом факторов
+    print(f"\n🔍 Матчи с МЕНЬШИМ числом факторов (до 15):")
+    small_events = sorted(valid_events, key=lambda x: len(all_factors.get(x[0].get("id"), [])))[:3]
+    for ev, lg in small_events:
+        eid = ev.get("id")
+        cnt = len(all_factors.get(eid, []))
+        print(f"   {ev.get('team1')} vs {ev.get('team2')} | {lg} | факторов: {cnt}")
+        fids = sorted(set(f.get("f") for f in all_factors.get(eid, []) if f.get("f")))
+        print(f"      f-IDs: {fids}")
+    
+    # === 3. Проверяем эндпоинт полной линии на примере малого матча ===
+    if small_events:
+        test_ev, test_lg = small_events[0]
+        test_ev_id = test_ev.get("id")
+        print(f"\n🔍 Пробую получить ПОЛНУЮ линию для: {test_ev.get('team1')} vs {test_ev.get('team2')}")
+        print(f"   Текущих факторов: {len(all_factors.get(test_ev_id, []))}")
+        print(f"\n   📡 Проверяю эндпоинты:")
+        probe_full_markets_endpoint(test_ev_id)
+    
+    # === 4. Логотипы (как обычно) ===
     teams_to_check = set()
     for ev, lg in valid_events:
         teams_to_check.add((ev.get("team1"), lg))
         teams_to_check.add((ev.get("team2"), lg))
-    
     teams_to_search = set()
     for t, league in teams_to_check:
         if not t: continue
         if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
         if team_logo_idx.get(t): continue
         teams_to_search.add((t, league))
-    
-    print(f"🔍 Новых команд для логотипов: {len(teams_to_search)}")
+    print(f"\n🔍 Новых команд для логотипов: {len(teams_to_search)}")
     if teams_to_search:
         teams_list = list({t for t, _ in teams_to_search})
         name_en_map = batch_translate_ru_to_en(teams_list)
