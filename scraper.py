@@ -31,18 +31,35 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
+# === РАСШИРЕННЫЙ СЛОВАРЬ ФАКТОРОВ ===
 FONBET_FACTORS = {
+    # 1X2 основная
     921: ("Исход", "П1", False), 922: ("Исход", "Х", False), 923: ("Исход", "П2", False),
+    # Двойной шанс
     924: ("Двойной шанс", "1Х", False), 925: ("Двойной шанс", "12", False), 926: ("Двойной шанс", "Х2", False),
+    # Обе забьют
     928: ("Обе забьют", "Да", False), 929: ("Обе забьют", "Нет", False),
+    # Тотал (главная линия)
+    930: ("Тотал", "ТБ", True), 931: ("Тотал", "ТМ", True),
+    # Форы (главная линия)
+    932: ("Фора", "Ф1", True), 933: ("Фора", "Ф2", True),
+    # Индивидуальные тоталы
+    934: ("ИТБ1", "ТБ", True), 935: ("ИТМ1", "ТМ", True),
+    936: ("ИТБ2", "ТБ", True), 937: ("ИТМ2", "ТМ", True),
+    # 1-й тайм Исход
+    938: ("1-й тайм Исход", "П1", False), 939: ("1-й тайм Исход", "Х", False), 940: ("1-й тайм Исход", "П2", False),
+    # 1-й тайм Тотал
+    941: ("1-й тайм Тотал", "ТБ", True), 942: ("1-й тайм Тотал", "ТМ", True),
+    # 1-й тайм Фора
+    943: ("1-й тайм Фора", "Ф1", True), 944: ("1-й тайм Фора", "Ф2", True),
+    # Альтернативные линии (диапазон 11-24)
+    11: ("Тотал", "ТБ", True), 12: ("Тотал", "ТМ", True),
+    13: ("Фора", "Ф1", True), 14: ("Фора", "Ф2", True),
+    15: ("Тотал", "ТБ", True), 16: ("Тотал", "ТМ", True),
     17: ("Тотал", "ТБ", True), 18: ("Тотал", "ТМ", True),
-    11: ("Фора", "Ф1", True), 12: ("Фора", "Ф2", True),
+    19: ("Тотал", "ТБ", True), 20: ("Тотал", "ТМ", True),
     21: ("ИТБ1", "ТБ", True), 22: ("ИТМ1", "ТМ", True),
     23: ("ИТБ2", "ТБ", True), 24: ("ИТМ2", "ТМ", True),
-    981: ("1-й тайм", "П1", False), 982: ("1-й тайм", "Х", False), 983: ("1-й тайм", "П2", False),
-    174: ("1-й тайм Тотал", "ТБ", True), 175: ("1-й тайм Тотал", "ТМ", True),
-    180: ("1-й тайм Фора", "Ф1", True), 181: ("1-й тайм Фора", "Ф2", True),
-    984: ("1-й тайм ОЗ", "Да", False), 985: ("1-й тайм ОЗ", "Нет", False),
 }
 
 ALLOWED_LEAGUE_PATTERNS = [
@@ -386,11 +403,41 @@ def _parse_start_ts(ev):
     except: return 0
 
 
-def collect_fonbet_data(data):
-    if not data: return [], {}, []
-    events = data.get("events", [])
-    sports_list = data.get("sports", [])
-    return events, sports_list
+def build_sport_hierarchy(all_sports):
+    """Строит карту: id → top-sport-entry. Ищет родителя по parentId/sportId/parent."""
+    entry_by_id = {}
+    parent_by_id = {}
+    for sp in all_sports:
+        sp_id = sp.get('id')
+        if sp_id is None: continue
+        entry_by_id[sp_id] = sp
+        parent = None
+        for field in ('parentId', 'parent_id', 'sportId', 'sport_id', 'parent', 'rootId', 'root_id'):
+            v = sp.get(field)
+            if v is not None and v != sp_id:
+                parent = v; break
+        if parent is not None:
+            parent_by_id[sp_id] = parent
+    
+    def find_top(entry_id):
+        cur = entry_id
+        visited = set()
+        for _ in range(20):
+            if cur in visited: return None
+            visited.add(cur)
+            entry = entry_by_id.get(cur)
+            if not entry: return None
+            if entry.get('kind') == 'sport':
+                return entry
+            p = parent_by_id.get(cur)
+            if p is None: return None
+            cur = p
+        return None
+    
+    top_by_id = {}
+    for sp_id in entry_by_id:
+        top_by_id[sp_id] = find_top(sp_id)
+    return entry_by_id, parent_by_id, top_by_id
 
 
 # ============ FIREBASE ============
@@ -413,7 +460,7 @@ async def firebase_put(path, data):
 
 async def main():
     t0 = time.time()
-    print("🔄 [Scraper] Запуск (Fonbet — только логотипы)...")
+    print("🔄 [Scraper] Запуск (Fonbet — только логотипы + debug факторов)...")
     
     now_ts = int(time.time())
     seven_days = 7 * 86400
@@ -423,7 +470,6 @@ async def main():
     team_logo_idx = build_team_logo_index(logo_cache)
     print(f"📥 В кэше логотипов: {len(logo_cache)} (уникальных: {len(team_logo_idx)})")
     
-    print("📥 Загружаю линию Fonbet...")
     line_data = fetch_fonbet_data(FONBET_BASE + FONBET_LINE_PATH)
     live_data = fetch_fonbet_data(FONBET_BASE + FONBET_LIVE_PATH)
     
@@ -432,12 +478,30 @@ async def main():
         return
     
     events_by_id = {}
+    all_factors = {}
     all_sports = []
+    all_live = {}
     
     for data in [line_data, live_data]:
         if not data: continue
-        events, sps = collect_fonbet_data(data)
-        all_sports.extend(sps)
+        events = data.get("events", [])
+        factors_raw = data.get("factors", [])
+        custom_factors_raw = data.get("customFactors", [])
+        sports_list = data.get("sports", [])
+        live_infos = data.get("liveEventInfos", [])
+        
+        all_sports.extend(sports_list)
+        for li in live_infos:
+            eid = li.get("eventId")
+            if eid: all_live[eid] = li
+        
+        for f in factors_raw:
+            eid = f.get("e")
+            if eid: all_factors.setdefault(eid, []).append(f)
+        for cf in custom_factors_raw:
+            eid = cf.get("e")
+            if eid: all_factors.setdefault(eid, []).extend(cf.get("factors", []))
+        
         for ev in events:
             eid = ev.get("id")
             if eid and eid not in events_by_id:
@@ -446,10 +510,25 @@ async def main():
     all_events = list(events_by_id.values())
     print(f"⚽ Всего событий: {len(all_events)}")
     
-    sport_name_by_id = {}
-    for sp in all_sports:
-        sid = sp.get('id'); nm = sp.get('name', '')
-        if sid and nm: sport_name_by_id[sid] = nm
+    # === СТРОИМ ИЕРАРХИЮ СПОРТА ===
+    entry_by_id, parent_by_id, top_by_id = build_sport_hierarchy(all_sports)
+    print(f"🏟 sports[] entries: {len(entry_by_id)}, с родителем: {len(parent_by_id)}")
+    
+    # Debug: проверим 5 известных турниров
+    print(f"   🔍 Проверка известных sportId:")
+    for test_sid in [11935, 11918, 11922, 11924, 11920]:
+        entry = entry_by_id.get(test_sid)
+        if entry:
+            top = top_by_id.get(test_sid)
+            top_name = top.get('name') if top else 'NOT_FOUND'
+            parent_chain = []
+            cur = test_sid
+            for _ in range(6):
+                p = parent_by_id.get(cur)
+                if p is None: break
+                parent_chain.append(p)
+                cur = p
+            print(f"      sportId={test_sid} ({entry.get('name','?')[:40]}) → top={top_name} | chain={parent_chain}")
     
     tournament_by_id = {}
     for sp in all_sports:
@@ -457,70 +536,112 @@ async def main():
         sid = sp.get('id'); nm = sp.get('name', '')
         if sid and nm: tournament_by_id[sid] = nm
     
-    # Собираем команды из матчей, которые прошли фильтр лиг
-    teams_to_check = set()  # (team, league)
-    valid_matches = 0
+    # === ФИЛЬТРАЦИЯ ===
+    valid_events = []
+    skipped_not_football = 0
+    skipped_not_match = 0
+    skipped_blacklist = 0
+    skipped_whitelist = 0
+    skipped_no_teams = 0
+    skipped_time = 0
+    rejected_leagues = Counter()
     
     for ev in all_events:
-        if ev.get("rootKind") != 1 or ev.get("kind") != 1: continue
+        if ev.get("rootKind") != 1 or ev.get("kind") != 1:
+            skipped_not_match += 1
+            continue
         t1 = ev.get("team1", ""); t2 = ev.get("team2", "")
-        if not t1 or not t2: continue
+        if not t1 or not t2:
+            skipped_no_teams += 1
+            continue
         
         st = _parse_start_ts(ev)
-        if st <= 0: continue
+        if st <= 0:
+            skipped_time += 1; continue
         
-        # Только в окне [now-3.5h, now+7d]
-        if st < now_ts - int(3.5 * 3600): continue
-        if st > now_ts + seven_days: continue
-        
+        # Проверка: sportId → top sport = Футбол
         sid = ev.get("sportId")
-        sport_name = sport_name_by_id.get(sid, "")
-        if sport_name and any(w in sport_name.lower() for w in ["гандбол", "баскетбол", "хоккей", "теннис", "handball"]):
+        top_sport = top_by_id.get(sid)
+        if not top_sport:
+            skipped_not_football += 1
             continue
+        sport_name = (top_sport.get('name') or '').lower()
+        if sport_name not in ('футбол', 'football', 'soccer'):
+            skipped_not_football += 1
+            continue
+        
+        if st < now_ts - int(3.5 * 3600): skipped_time += 1; continue
+        if st > now_ts + seven_days: skipped_time += 1; continue
         
         league = tournament_by_id.get(sid, "")
         text = f"{t1} {t2}".lower()
-        if any(word in text for word in BLACKLIST_WORDS): continue
-        if not is_allowed_league(league): continue
+        if any(word in text for word in BLACKLIST_WORDS):
+            skipped_blacklist += 1; continue
         
-        teams_to_check.add((t1, league))
-        teams_to_check.add((t2, league))
-        valid_matches += 1
+        if not is_allowed_league(league):
+            skipped_whitelist += 1
+            if league: rejected_leagues[league] += 1
+            continue
+        
+        valid_events.append((ev, league))
     
-    print(f"🎯 Матчей в окне: {valid_matches}")
-    print(f"🏟 Уникальных (команда, лига): {len(teams_to_check)}")
+    print(f"🔎 Отсев: не матч: {skipped_not_match} | не футбол: {skipped_not_football} | нет команд: {skipped_no_teams} | время: {skipped_time} | blacklist: {skipped_blacklist} | whitelist: {skipped_whitelist}")
+    print(f"🎯 Валидных матчей: {len(valid_events)}")
     
-    # Какие команды нуждаются в логотипах (нет в кэше или fallback)
+    valid_leagues = Counter(lg for _, lg in valid_events)
+    print(f"   ✅ Топ-10 разрешённых лиг:")
+    for lg, cnt in valid_leagues.most_common(10):
+        print(f"      {cnt:4d}  {lg}")
+    
+    if rejected_leagues:
+        print(f"   🔍 Топ-10 отсечённых (проверь что нужных нет):")
+        for lg, cnt in rejected_leagues.most_common(10):
+            print(f"      {cnt:4d}  {lg}")
+    
+    # === DEBUG: DUMP ФАКТОРОВ (один раз за прогон) ===
+    print(f"\n🔍 [FACTOR DUMP] Ищу матч с максимумом факторов:")
+    best_ev = None
+    best_count = 0
+    for ev, lg in valid_events:
+        eid = ev.get("id")
+        cnt = len(all_factors.get(eid, []))
+        if cnt > best_count:
+            best_count = cnt
+            best_ev = ev
+    if best_ev:
+        eid = best_ev.get("id")
+        factors = all_factors.get(eid, [])
+        print(f"   {best_ev.get('team1')} vs {best_ev.get('team2')} | лига: {tournament_by_id.get(best_ev.get('sportId'), '?')} | факторов: {len(factors)}")
+        print(f"   Все факторы (f | gs | p | v):")
+        for f in factors[:80]:
+            print(f"      f={f.get('f'):>4} | gs={f.get('gs'):>3} | p={str(f.get('p')):>8} | v={f.get('v')}")
+    print()
+    
+    # === ЛОГОТИПЫ ===
+    teams_to_check = set()
+    for ev, lg in valid_events:
+        teams_to_check.add((ev.get("team1"), lg))
+        teams_to_check.add((ev.get("team2"), lg))
+    
     teams_to_search = set()
     for t, league in teams_to_check:
+        if not t: continue
         if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
         existing = team_logo_idx.get(t)
-        if existing and not _is_fallback(existing): continue
-        if existing and _is_fallback(existing): continue  # не ищем повторно
+        if existing: continue
         teams_to_search.add((t, league))
     
-    print(f"🔍 Новых команд для поиска логотипов: {len(teams_to_search)}")
+    print(f"🔍 Новых команд для логотипов: {len(teams_to_search)}")
+    if teams_to_search:
+        teams_list = list({t for t, _ in teams_to_search})
+        name_en_map = batch_translate_ru_to_en(teams_list)
+        await search_all_logos(list(teams_to_search), logo_cache, name_en_map)
+        await firebase_put("team_logos", _cache_to_fb(logo_cache))
+        print(f"💾 Сохранено логотипов: {len(logo_cache)}")
     
-    if not teams_to_search:
-        print("✅ Все логотипы уже в кэше. Ничего искать не нужно.")
-        print(f"⏱ Время: {time.time()-t0:.1f}s")
-        return
-    
-    teams_list = list({t for t, _ in teams_to_search})
-    print(f"🔤 Перевожу {len(teams_list)} названий команд...")
-    name_en_map = batch_translate_ru_to_en(teams_list)
-    
-    print(f"🔎 Ищу логотипы для {len(teams_to_search)} пар...")
-    await search_all_logos(list(teams_to_search), logo_cache, name_en_map)
-    
-    ok = await firebase_put("team_logos", _cache_to_fb(logo_cache))
-    print(f"💾 Сохранено логотипов: {len(logo_cache)} (ok={ok})")
-    
-    if FALLBACK_TEAMS:
-        print(f"🚨 БЕЗ ЛОГОТИПОВ: {len(set(FALLBACK_TEAMS))} новых команд")
-    
-    print(f"📊 Stats: fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
     print(f"⏱ Время: {time.time()-t0:.1f}s")
+    print(f"\n⚠️ ВАЖНО: matches управляется worker'ом на Render. Скрапер matches не трогает.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
