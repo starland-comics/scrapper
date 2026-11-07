@@ -31,25 +31,57 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-# === СЛОВАРЬ ФАКТОРОВ (Пока базовые + расширенные, ждем dump) ===
+# Словарь с предположительным маппингом (дополним после dump)
 FONBET_FACTORS = {
+    # 1X2
     921: ("Исход", "П1", False), 922: ("Исход", "Х", False), 923: ("Исход", "П2", False),
+    # Двойной шанс
     924: ("Двойной шанс", "1Х", False), 925: ("Двойной шанс", "12", False), 926: ("Двойной шанс", "Х2", False),
-    928: ("Обе забьют", "Да", False), 929: ("Обе забьют", "Нет", False),
+    # Обе забьют
+    927: ("Обе забьют", "Нет", False), 928: ("Обе забьют", "Да", False),
+    # Тоталы
     930: ("Тотал", "ТБ", True), 931: ("Тотал", "ТМ", True),
-    932: ("Фора", "Ф1", True), 933: ("Фора", "Ф2", True),
-    934: ("ИТБ1", "ТБ", True), 935: ("ИТМ1", "ТМ", True),
-    936: ("ИТБ2", "ТБ", True), 937: ("ИТМ2", "ТМ", True),
-    938: ("1-й тайм Исход", "П1", False), 939: ("1-й тайм Исход", "Х", False), 940: ("1-й тайм Исход", "П2", False),
-    941: ("1-й тайм Тотал", "ТБ", True), 942: ("1-й тайм Тотал", "ТМ", True),
-    943: ("1-й тайм Фора", "Ф1", True), 944: ("1-й тайм Фора", "Ф2", True),
-    11: ("Тотал", "ТБ", True), 12: ("Тотал", "ТМ", True),
-    13: ("Фора", "Ф1", True), 14: ("Фора", "Ф2", True),
-    15: ("Тотал", "ТБ", True), 16: ("Тотал", "ТМ", True),
-    17: ("Тотал", "ТБ", True), 18: ("Тотал", "ТМ", True),
-    19: ("Тотал", "ТБ", True), 20: ("Тотал", "ТМ", True),
-    21: ("ИТБ1", "ТБ", True), 22: ("ИТМ1", "ТМ", True),
-    23: ("ИТБ2", "ТБ", True), 24: ("ИТМ2", "ТМ", True),
+    # Форы (основные)
+    910: ("Фора", "Ф1", True), 912: ("Фора", "Ф2", True),
+    989: ("Фора", "Ф1", True), 991: ("Фора", "Ф2", True),
+    # Тоталы 2.5 (спец ID)
+    1569: ("Тотал", "ТМ", True), 1571: ("Тотал", "ТМ", True), 1572: ("Тотал", "ТБ", True),
+    # Инд. тоталы / низкие форы (группа 1672-1687)
+    1672: ("Фора", "Ф1", True), 1675: ("Фора", "Ф2", True),
+    1677: ("Фора", "Ф1", True), 1678: ("Фора", "Ф2", True),
+    1680: ("Фора", "Ф1", True), 1681: ("Фора", "Ф2", True),
+    1683: ("Фора", "Ф1", True), 1684: ("Фора", "Ф2", True),
+    1686: ("Фора", "Ф1", True), 1687: ("Фора", "Ф2", True),
+    # ИТБ/ИТМ (индивидуальные)
+    1696: ("ИТБ1", "ТБ", True), 1697: ("ИТБ2", "ТБ", True),
+    1727: ("ИТБ1", "ТБ", True), 1728: ("ИТБ2", "ТБ", True),
+    1730: ("ИТБ1", "ТБ", True), 1731: ("ИТБ2", "ТБ", True),
+    1733: ("ИТБ1", "ТБ", True), 1734: ("ИТБ2", "ТБ", True),
+    1736: ("ИТБ1", "ТБ", True), 1737: ("ИТБ2", "ТБ", True),
+    1739: ("ИТБ1", "ТБ", True), 1791: ("ИТБ2", "ТБ", True),
+    1793: ("ИТБ1", "ТБ", True), 1794: ("ИТБ2", "ТБ", True),
+    1796: ("ИТБ1", "ТБ", True), 1797: ("ИТБ2", "ТБ", True),
+    1799: ("ИТБ1", "ТБ", True), 1800: ("ИТБ2", "ТБ", True),
+    1802: ("ИТБ1", "ТБ", True), 1803: ("ИТБ2", "ТБ", True),
+    1805: ("ИТБ1", "ТБ", True), 1806: ("ИТБ2", "ТБ", True),
+    # Форы 0.5-4 (вторая серия)
+    1809: ("Фора", "Ф1", True), 1810: ("Фора", "Ф2", True),
+    1812: ("Фора", "Ф1", True), 1813: ("Фора", "Ф2", True),
+    1815: ("Фора", "Ф1", True), 1816: ("Фора", "Ф2", True),
+    1818: ("Фора", "Ф1", True), 1819: ("Фора", "Ф2", True),
+    1821: ("Фора", "Ф1", True), 1822: ("Фора", "Ф2", True),
+    1824: ("Фора", "Ф1", True), 1825: ("Фора", "Ф2", True),
+    1827: ("Фора", "Ф1", True), 1828: ("Фора", "Ф2", True),
+    1830: ("Фора", "Ф1", True), 1831: ("Фора", "Ф2", True),
+    # Тоталы низкие 0.5-2.5 (серия 1854-1887)
+    1854: ("Тотал", "ТБ", True), 1871: ("Тотал", "ТМ", True),
+    1873: ("Тотал", "ТБ", True), 1874: ("Тотал", "ТМ", True),
+    1880: ("Тотал", "ТБ", True), 1881: ("Тотал", "ТМ", True),
+    1883: ("Тотал", "ТБ", True), 1884: ("Тотал", "ТМ", True),
+    1886: ("Тотал", "ТБ", True), 1887: ("Тотал", "ТМ", True),
+    # Доп
+    2203: ("Тотал", "ТБ", True), 2204: ("Тотал", "ТМ", True),
+    4241: ("Обе забьют 1-й тайм", "Нет", False), 4242: ("Обе забьют 1-й тайм", "Да", False),
 }
 
 ALLOWED_LEAGUE_PATTERNS = [
@@ -385,13 +417,29 @@ def fetch_fonbet_data(url):
             time.sleep(1)
     return None
 
+def fetch_factor_reference():
+    """Пробует получить справочник f-ID с человекочитаемыми названиями."""
+    urls = [
+        f"{FONBET_BASE}/api/v1/sports/1/factors?lang=ru",
+        f"{FONBET_BASE}/sports/1/factors?lang=ru",
+        f"{FONBET_BASE}/api/v1/factors?lang=ru",
+    ]
+    for u in urls:
+        try:
+            r = cffi_requests.get(u, headers=FONBET_HEADERS, impersonate="chrome120", timeout=15)
+            if r.status_code == 200:
+                try: 
+                    data = r.json()
+                    if data: return data
+                except: pass
+        except: pass
+    return None
 
 def _parse_start_ts(ev):
     st = ev.get("startTime")
     if st is None: return 0
     try: return int(st)
     except: return 0
-
 
 def _build_sport_hierarchy(all_sports):
     entry_by_id = {}
@@ -407,27 +455,21 @@ def _build_sport_hierarchy(all_sports):
                 parent = v; break
         if parent is not None:
             parent_by_id[sp_id] = parent
-    
     def find_top(entry_id):
-        cur = entry_id
-        visited = set()
+        cur = entry_id; visited = set()
         for _ in range(20):
             if cur in visited: return None
             visited.add(cur)
             entry = entry_by_id.get(cur)
             if not entry: return None
-            if entry.get('kind') == 'sport':
-                return entry
+            if entry.get('kind') == 'sport': return entry
             p = parent_by_id.get(cur)
             if p is None: return None
             cur = p
         return None
-    
     top_by_id = {}
-    for sp_id in entry_by_id:
-        top_by_id[sp_id] = find_top(sp_id)
+    for sp_id in entry_by_id: top_by_id[sp_id] = find_top(sp_id)
     return entry_by_id, parent_by_id, top_by_id
-
 
 # ============ FIREBASE ============
 
@@ -444,12 +486,11 @@ async def firebase_put(path, data):
             return r.status_code == 200
     except Exception: return False
 
-
 # ============ MAIN ============
 
 async def main():
     t0 = time.time()
-    print("🔄 [Scraper] Запуск (Fonbet — только логотипы + debug факторов)...")
+    print("🔄 [Scraper] Запуск (Fonbet — только логотипы + расширенный dump)...")
     
     now_ts = int(time.time())
     seven_days = 7 * 86400
@@ -500,22 +541,6 @@ async def main():
     print(f"⚽ Всего событий: {len(all_events)}")
     
     entry_by_id, parent_by_id, top_by_id = _build_sport_hierarchy(all_sports)
-    print(f"🏟 sports[] entries: {len(entry_by_id)}, с родителем: {len(parent_by_id)}")
-    
-    print(f"   🔍 Проверка известных sportId:")
-    for test_sid in [11935, 11918, 11922, 11924, 11920]:
-        entry = entry_by_id.get(test_sid)
-        if entry:
-            top = top_by_id.get(test_sid)
-            top_name = top.get('name') if top else 'NOT_FOUND'
-            parent_chain = []
-            cur = test_sid
-            for _ in range(6):
-                p = parent_by_id.get(cur)
-                if p is None: break
-                parent_chain.append(p)
-                cur = p
-            print(f"      sportId={test_sid} ({entry.get('name','?')[:40]}) → top={top_name} | chain={parent_chain}")
     
     tournament_by_id = {}
     for sp in all_sports:
@@ -525,127 +550,81 @@ async def main():
     
     # === ФИЛЬТРАЦИЯ ===
     valid_events = []
-    skipped_not_football = 0
-    skipped_not_match = 0
-    skipped_blacklist = 0
-    skipped_whitelist = 0
-    skipped_no_teams = 0
-    skipped_time = 0
-    rejected_leagues = Counter()
+    skipped_not_football = 0; skipped_not_match = 0; skipped_blacklist = 0
+    skipped_whitelist = 0; skipped_no_teams = 0; skipped_time = 0
     
     for ev in all_events:
-        if ev.get("rootKind") != 1 or ev.get("kind") != 1:
-            skipped_not_match += 1
-            continue
+        if ev.get("rootKind") != 1 or ev.get("kind") != 1: skipped_not_match += 1; continue
         t1 = ev.get("team1", ""); t2 = ev.get("team2", "")
-        if not t1 or not t2:
-            skipped_no_teams += 1
-            continue
-        
+        if not t1 or not t2: skipped_no_teams += 1; continue
         st = _parse_start_ts(ev)
-        if st <= 0:
-            skipped_time += 1; continue
-        
+        if st <= 0: skipped_time += 1; continue
         sid = ev.get("sportId")
         top_sport = top_by_id.get(sid)
-        if not top_sport:
-            skipped_not_football += 1
-            continue
+        if not top_sport: skipped_not_football += 1; continue
         sport_name = (top_sport.get('name') or '').lower()
-        if sport_name not in ('футбол', 'football', 'soccer'):
-            skipped_not_football += 1
-            continue
-        
+        if sport_name not in ('футбол', 'football', 'soccer'): skipped_not_football += 1; continue
         if st < now_ts - int(3.5 * 3600): skipped_time += 1; continue
         if st > now_ts + seven_days: skipped_time += 1; continue
-        
         league = tournament_by_id.get(sid, "")
         text = f"{t1} {t2}".lower()
-        if any(word in text for word in BLACKLIST_WORDS):
-            skipped_blacklist += 1; continue
-        
-        if not is_allowed_league(league):
-            skipped_whitelist += 1
-            if league: rejected_leagues[league] += 1
-            continue
-        
+        if any(word in text for word in BLACKLIST_WORDS): skipped_blacklist += 1; continue
+        if not is_allowed_league(league): skipped_whitelist += 1; continue
         valid_events.append((ev, league))
     
-    print(f"🔎 Отсев: не матч: {skipped_not_match} | не футбол: {skipped_not_football} | нет команд: {skipped_no_teams} | время: {skipped_time} | blacklist: {skipped_blacklist} | whitelist: {skipped_whitelist}")
     print(f"🎯 Валидных матчей: {len(valid_events)}")
     
-    valid_leagues = Counter(lg for _, lg in valid_events)
-    print(f"   ✅ Топ-10 разрешённых лиг:")
-    for lg, cnt in valid_leagues.most_common(10):
-        print(f"      {cnt:4d}  {lg}")
+    # === ПОПЫТКА ПОЛУЧИТЬ СПРАВОЧНИК ===
+    print(f"\n📚 [FACTOR REFERENCE] Пробую получить справочник f-ID...")
+    ref_data = fetch_factor_reference()
+    if ref_data:
+        print(f"   ✅ Справочник получен: {type(ref_data).__name__}, len={len(ref_data) if hasattr(ref_data,'__len__') else '?'}")
+        if isinstance(ref_data, list) and ref_data:
+            print(f"   Первые 3 записи:")
+            for item in ref_data[:3]:
+                print(f"      {item}")
+        elif isinstance(ref_data, dict):
+            print(f"   Ключи: {list(ref_data.keys())[:5]}")
+            print(f"   Первый элемент: {list(ref_data.items())[:2]}")
+    else:
+        print(f"   ⚠️ Справочник не получен — попробую другие эндпоинты позже")
     
-    if rejected_leagues:
-        print(f"   🔍 Топ-10 отсечённых (проверь что нужных нет):")
-        for lg, cnt in rejected_leagues.most_common(10):
-            print(f"      {cnt:4d}  {lg}")
+    # === DUMP ТОП-3 МАТЧЕЙ ===
+    print(f"\n🔍 [FACTOR DUMP] Топ-3 матча по количеству факторов:")
+    sorted_events = sorted(valid_events, key=lambda x: -len(all_factors.get(x[0].get("id"), [])))[:3]
     
-    # === DEBUG: DUMP ФАКТОРОВ (один раз за прогон) ===
-    print(f"\n🔍 [FACTOR DUMP] Ищу матч с максимумом факторов:")
-    best_ev = None
-    best_league = ""
-    best_count = 0
-    for ev, lg in valid_events:
-        eid = ev.get("id")
-        cnt = len(all_factors.get(eid, []))
-        if cnt > best_count:
-            best_count = cnt
-            best_ev = ev
-            best_league = lg
-    if best_ev:
+    for idx, (best_ev, best_league) in enumerate(sorted_events, 1):
         eid = best_ev.get("id")
         factors = all_factors.get(eid, [])
-        print(f"\n   {best_ev.get('team1')} vs {best_ev.get('team2')} | лига: {best_league} | факторов: {len(factors)}\n")
+        print(f"\n   [{idx}] {best_ev.get('team1')} vs {best_ev.get('team2')} | {best_league} | факторов: {len(factors)}")
         
-        # Группировка по f-ID
-        fid_map = defaultdict(lambda: {"p_values": set(), "count": 0, "gs_set": set()})
+        # Сортируем по f-ID и группируем
+        fid_map = defaultdict(lambda: {"p_values": set(), "count": 0, "v_examples": []})
         for f in factors:
             fid = f.get('f')
             if fid is None: continue
             p = f.get('p')
-            gs = f.get('gs')
+            v = f.get('v')
             fid_map[fid]["p_values"].add(p)
             fid_map[fid]["count"] += 1
-            fid_map[fid]["gs_set"].add(gs)
+            if v is not None and len(fid_map[fid]["v_examples"]) < 2:
+                fid_map[fid]["v_examples"].append((p, v))
         
-        print(f"   📊 Уникальных f-ID: {len(fid_map)}")
-        print(f"   {'f':>4} | {'count':>5} | {'gs':>8} | p-значения")
+        print(f"   {'f':>5} | {'cnt':>3} | p-значения (с v примерами)")
         print(f"   {'-'*70}")
         for fid in sorted(fid_map.keys()):
             info = fid_map[fid]
-            # Сортируем p (None в конец)
-            p_list = sorted(
-                [str(x) for x in info["p_values"] if x is not None],
-                key=lambda x: (float(x) if x.replace('-','').replace('.','').isdigit() else 0)
-            )
-            if None in info["p_values"]:
-                p_list.append("None")
-            p_display = ", ".join(p_list[:10])
-            if len(p_list) > 10:
-                p_display += f" ... (+{len(p_list)-10})"
-            gs_display = ",".join(sorted([str(x) for x in info["gs_set"] if x is not None]))[:8]
-            print(f"   f={fid:>4} | {info['count']:>5} | {gs_display:>8} | [{p_display}]")
-        
-        # Дополнительно — структура первых 5 факторов целиком
-        print(f"\n   🔍 Полная структура первых 5 факторов:")
-        for f in factors[:5]:
-            print(f"      {f}")
-        
-        # Какой gs что содержит (первые 10 gs)
-        print(f"\n   🔍 Распределение по gs (группам):")
-        gs_groups = defaultdict(list)
-        for f in factors:
-            gs = f.get('gs')
-            fid = f.get('f')
-            if gs is not None and fid is not None:
-                gs_groups[gs].append(fid)
-        for gs_id in sorted(gs_groups.keys())[:15]:
-            fids = sorted(set(gs_groups[gs_id]))
-            print(f"      gs={gs_id:>3}: {len(gs_groups[gs_id])} факторов, f-IDs: {fids}")
+            p_vals = []
+            for p, v in info["v_examples"]:
+                p_display = _format_param(p) if p is not None else "—"
+                p_vals.append(f"{p_display}={v}")
+            if info["count"] > len(p_vals):
+                p_vals.append(f"... (+{info['count']-len(p_vals)} значений)")
+            p_str = ", ".join(p_vals)
+            # Пометка "в нашем словаре" 
+            known = "✅" if fid in FONBET_FACTORS else "❓"
+            print(f"   {known} f={fid:>5} | {info['count']:>3} | {p_str}")
+    
     print()
     
     # === ЛОГОТИПЫ ===
@@ -653,15 +632,12 @@ async def main():
     for ev, lg in valid_events:
         teams_to_check.add((ev.get("team1"), lg))
         teams_to_check.add((ev.get("team2"), lg))
-    
     teams_to_search = set()
     for t, league in teams_to_check:
         if not t: continue
         if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
-        existing = team_logo_idx.get(t)
-        if existing: continue
+        if team_logo_idx.get(t): continue
         teams_to_search.add((t, league))
-    
     print(f"🔍 Новых команд для логотипов: {len(teams_to_search)}")
     if teams_to_search:
         teams_list = list({t for t, _ in teams_to_search})
@@ -671,8 +647,16 @@ async def main():
         print(f"💾 Сохранено логотипов: {len(logo_cache)}")
     
     print(f"⏱ Время: {time.time()-t0:.1f}s")
-    print(f"\n⚠️ ВАЖНО: matches управляется worker'ом на Render. Скрапер matches не трогает.")
 
+def _format_param(p):
+    if p is None: return "—"
+    try: p_val = float(p)
+    except: return str(p)
+    if p_val != int(p_val): return f"{p_val:g}"
+    p_int = int(p_val)
+    if abs(p_int) >= 100: return f"{p_int/100:g}"
+    elif abs(p_int) >= 10: return f"{p_int/10:g}"
+    return str(p_int)
 
 if __name__ == "__main__":
     asyncio.run(main())
