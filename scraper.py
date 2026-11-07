@@ -31,191 +31,81 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-# ID факторов Fonbet (проверенные + расширенные)
 FONBET_FACTORS = {
-    # Исход 1X2
-    921: ("Исход", "П1", False),
-    922: ("Исход", "Х", False),
-    923: ("Исход", "П2", False),
-    # Двойной шанс
-    924: ("Двойной шанс", "1Х", False),
-    925: ("Двойной шанс", "12", False),
-    926: ("Двойной шанс", "Х2", False),
-    # Обе забьют
-    928: ("Обе забьют", "Да", False),
-    929: ("Обе забьют", "Нет", False),
-    # Тоталы (разные ID для разных наборов)
-    17: ("Тотал", "ТБ", True),
-    18: ("Тотал", "ТМ", True),
-    930: ("Тотал", "ТБ", True),
-    931: ("Тотал", "ТМ", True),
-    910: ("Тотал", "ТБ", True),
-    911: ("Тотал", "ТМ", True),
-    # Форы
-    932: ("Фора", "Ф1", True),
-    933: ("Фора", "Ф2", True),
-    12: ("Фора", "Ф1", True),
-    13: ("Фора", "Ф2", True),
+    921: ("Исход", "П1", False), 922: ("Исход", "Х", False), 923: ("Исход", "П2", False),
+    924: ("Двойной шанс", "1Х", False), 925: ("Двойной шанс", "12", False), 926: ("Двойной шанс", "Х2", False),
+    928: ("Обе забьют", "Да", False), 929: ("Обе забьют", "Нет", False),
+    17: ("Тотал", "ТБ", True), 18: ("Тотал", "ТМ", True),
+    930: ("Тотал", "ТБ", True), 931: ("Тотал", "ТМ", True),
+    910: ("Тотал", "ТБ", True), 911: ("Тотал", "ТМ", True),
+    932: ("Фора", "Ф1", True), 933: ("Фора", "Ф2", True),
+    12: ("Фора", "Ф1", True), 13: ("Фора", "Ф2", True),
 }
 
-# === WHITELIST через точные REGEX (якоря ^ и lookahead) ===
 ALLOWED_LEAGUE_PATTERNS = [
-    # Россия: РПЛ, ФНЛ/Первая лига, Кубок
-    r'^россия\.\s*премьер',
-    r'^россия\.\s*рпл',
-    r'^россия\.\s*фнл',
-    r'^россия\.\s*первая лига',
-    r'^россия\.\s*кубок',
-    # Англия: АПЛ, Чемпионшип, Кубки (без Национальной лиги, без Лиги Трофи)
-    r'^англия\.\s*премьер',
-    r'^англия\.\s*чемпионшип($|\s*\.|\s*сезон)',
-    r'^англия\.\s*кубок англии',
-    r'^англия\.\s*fa cup',
-    r'^англия\.\s*кубок лиги',
-    r'^англия\.\s*efl cup',
-    r'^англия\.\s*carabao',
-    # Испания: Ла Лига, Сегунда (НЕ RFEF, НЕ FEB)
-    r'^испания\.\s*ла лига',
-    r'^испания\.\s*примера($|\s*дивизион)',
-    r'^испания\.\s*сегунда($|\s*дивизион|\s*лига)',
-    r'^испания\.\s*кубок',
-    r'^испания\.\s*copa',
-    # Италия: Серия А (не А1/А2), Серия B, Кубок
-    r'^италия\.\s*серия а($|\s*\.|\s*сезон)',
-    r'^италия\.\s*серия b($|\s*\.|\s*сезон)',
-    r'^италия\.\s*серия б($|\s*\.|\s*сезон)',
-    r'^италия\.\s*кубок',
-    # Германия: Бундеслига (не 2-я), 2-я Бундеслига, Кубок
-    r'^германия\.\s*бундеслига($|\s*\.|\s*сезон)',
-    r'^германия\.\s*2\.\s*бундеслига',
-    r'^германия\.\s*вторая бундеслига',
-    r'^германия\.\s*кубок',
-    # Франция: Лига 1, Лига 2, Кубок
-    r'^франция\.\s*лига 1($|\s*\.|\s*сезон)',
-    r'^франция\.\s*лига 2($|\s*\.|\s*сезон)',
-    r'^франция\.\s*кубок',
-    # Португалия: Примейра, Кубок
-    r'^португалия\.\s*примейра',
-    r'^португалия\.\s*primeira',
-    r'^португалия\.\s*лига португал',
-    r'^португалия\.\s*кубок',
-    r'^португалия\.\s*taça',
-    # Нидерланды: Эредивизи, Кубок
-    r'^нидерланды\.\s*эредивизи',
-    r'^нидерланды\.\s*eredivisie',
-    r'^нидерланды\.\s*кубок',
-    r'^нидерланды\.\s*knvb',
-    # Бразилия: Серия A, Кубок (НЕ Серия B, НЕ Кариока, НЕ Гойяно)
-    r'^бразилия\.\s*серия a($|\s*\.|\s*сезон)',
-    r'^бразилия\.\s*серия а($|\s*\.|\s*сезон)',
-    r'^бразилия\.\s*кубок',
-    r'^бразилия\.\s*copa do brasil',
-    # Украина: УПЛ, Кубок
-    r'^украина\.\s*премьер',
-    r'^украина\.\s*упл',
-    r'^украина\.\s*кубок',
-    # Казахстан: Премьер, Кубок
-    r'^казахстан\.\s*премьер',
-    r'^казахстан\.\s*кубок',
-    # Саудовская Аравия: Про-лига, Кубок
-    r'^саудовская аравия\.\s*про',
-    r'^саудовская аравия\.\s*премьер',
-    r'^саудовская аравия\.\s*кубок',
-    # Турция: Суперлига, Кубок
-    r'^турция\.\s*суперлига',
-    r'^турция\.\s*süper',
-    r'^турция\.\s*кубок',
-    # США: MLS
-    r'^сша\.\s*mls',
-    r'^сша\.\s*major league soccer',
-    # Международные (УЕФА и сборные)
+    r'^россия\.\s*премьер', r'^россия\.\s*рпл', r'^россия\.\s*фнл', r'^россия\.\s*первая лига', r'^россия\.\s*кубок',
+    r'^англия\.\s*премьер', r'^англия\.\s*чемпионшип($|\s*\.|\s*сезон)',
+    r'^англия\.\s*кубок англии', r'^англия\.\s*fa cup', r'^англия\.\s*кубок лиги', r'^англия\.\s*efl cup', r'^англия\.\s*carabao',
+    r'^испания\.\s*ла лига', r'^испания\.\s*примера($|\s*дивизион)', r'^испания\.\s*сегунда($|\s*дивизион|\s*лига)', r'^испания\.\s*кубок', r'^испания\.\s*copa',
+    r'^италия\.\s*серия а($|\s*\.|\s*сезон)', r'^италия\.\s*серия b($|\s*\.|\s*сезон)', r'^италия\.\s*серия б($|\s*\.|\s*сезон)', r'^италия\.\s*кубок',
+    r'^германия\.\s*бундеслига($|\s*\.|\s*сезон)', r'^германия\.\s*2\.\s*бундеслига', r'^германия\.\s*вторая бундеслига', r'^германия\.\s*кубок',
+    r'^франция\.\s*лига 1($|\s*\.|\s*сезон)', r'^франция\.\s*лига 2($|\s*\.|\s*сезон)', r'^франция\.\s*кубок',
+    r'^португалия\.\s*примейра', r'^португалия\.\s*primeira', r'^португалия\.\s*лига португал', r'^португалия\.\s*кубок', r'^португалия\.\s*taça',
+    r'^нидерланды\.\s*эредивизи', r'^нидерланды\.\s*eredivisie', r'^нидерланды\.\s*кубок', r'^нидерланды\.\s*knvb',
+    r'^бразилия\.\s*серия a($|\s*\.|\s*сезон)', r'^бразилия\.\s*серия а($|\s*\.|\s*сезон)', r'^бразилия\.\s*кубок', r'^бразилия\.\s*copa do brasil',
+    r'^украина\.\s*премьер', r'^украина\.\s*упл', r'^украина\.\s*кубок',
+    r'^казахстан\.\s*премьер', r'^казахстан\.\s*кубок',
+    r'^саудовская аравия\.\s*про', r'^саудовская аравия\.\s*премьер', r'^саудовская аравия\.\s*кубок',
+    r'^турция\.\s*суперлига', r'^турция\.\s*süper', r'^турция\.\s*кубок',
+    r'^сша\.\s*mls', r'^сша\.\s*major league soccer',
     r'^лига чемпионов(\s+уефа)?(\.|\s+(общий|группов|плей|финал|квалиф)|$)',
     r'^лига европы(\s+уефа)?(\.|\s+(общий|группов|плей|финал|квалиф)|$)',
-    r'^лига конференций(\s+уефа)?',
-    r'^чемпионат европы',
-    r'^чемпионат мира',
-    r'^лига наций',
-    r'^отборочный',
-    r'^сборная',
-    r'^суперкубок уефа',
-    r'^товарищеск',
+    r'^лига конференций(\s+уефа)?', r'^чемпионат европы', r'^чемпионат мира', r'^лига наций', r'^отборочный', r'^сборная', r'^суперкубок уефа', r'^товарищеск',
 ]
 
-# === BLACKLIST: виды спорта + мусор (работает ДО whitelist) ===
 FORBIDDEN_LEAGUE_WORDS = [
-    "теннис", "tennis", "баскетбол", "basketball",
-    "хоккей", "hockey", "волейбол", "volleyball",
-    "регби", "rugby", "крикет", "cricket",
-    "американский футбол", "american football", "бейсбол", "baseball",
+    "теннис", "tennis", "баскетбол", "basketball", "хоккей", "hockey", "волейбол", "volleyball",
+    "регби", "rugby", "крикет", "cricket", "американский футбол", "american football", "бейсбол", "baseball",
     "гандбол", "handball", "флорбол", "floorball", "пляжный",
-    "кибер", "esports", "e-sports", "csgo", "cs:go", "dota",
-    "virtua", "виртуальн", "virtual",
-    "лига про", "h2h", "fc 27", "fc27", "fc 26", "fc26", "fc 25", "fc25",
-    "ncaa", "ncaab", "ncaaf",
-    "жен", "women", "ladies", "fem", "vrouwen", "дамы", "девуш",
-    "юнош", "юн ", "молодеж", "молодёж", "молодежн",
-    "дубл", "reserve", "academy", "академ",
-    "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
-    "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23",
-    "пфл", "третий дивизион", "третья лига", "третий див",
-    "amateur", "любител", "лига трофи",
-    # Региональные и младшие дивизионы
-    "региональн", "regional",
-    "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8",
-    "b1", "b2", "b3", "b4",
-    "c1", "c2", "c3",
-    "rfef", "feb", "futsal", "мини-футбол", "мини футбол",
-    "кариока", "гойяно", "паулиста", "минейро", "баияно",
-    "катарinense", "catarinense", "gaúcho", "gaucho",
-    "парана", "paranaense", "cearense", "pernambucano",
-    # Не-УЕФА международные
-    "азии", "азия", "afc",
-    "африки", "африка", "caf",
-    "конкакаф", "concacaf",
-    "южной америки", "conmebol",
-    "олимпийск", "olympic",
+    "кибер", "esports", "e-sports", "csgo", "cs:go", "dota", "virtua", "виртуальн", "virtual",
+    "лига про", "h2h", "fc 27", "fc27", "fc 26", "fc26", "fc 25", "fc25", "ncaa", "ncaab", "ncaaf",
+    "жен", "women", "ladies", "fem", "vrouwen", "дамы", "девуш", "юнош", "юн ", "молодеж", "молодёж", "молодежн",
+    "дубл", "reserve", "academy", "академ", "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
+    "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23", "пфл", "третий дивизион", "третья лига", "третий див",
+    "amateur", "любител", "лига трофи", "региональн", "regional", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8",
+    "b1", "b2", "b3", "b4", "c1", "c2", "c3", "rfef", "feb", "futsal", "мини-футбол", "мини футбол",
+    "кариока", "гойяно", "паулиста", "минейро", "баияно", "catarinense", "gaúcho", "gaucho",
+    "парана", "paranaense", "cearense", "pernambucano", "азии", "азия", "afc", "африки", "африка", "caf",
+    "конкакаф", "concacaf", "южной америки", "conmebol", "олимпийск", "olympic",
 ]
 
 BLACKLIST_WORDS = [
-    "люб", "жен", "мол", "дубл", "резерв", "академ",
-    "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
-    "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23",
-    " b team", " ii", " iii",
+    "люб", "жен", "мол", "дубл", "резерв", "академ", "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
+    "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23", " b team", " ii", " iii",
 ]
 
 INTL_LEAGUE_WORDS = [
-    "world cup", "euro ", "european championship", "nations",
-    "copa america", "africa cup", "asian cup", "gold cup",
+    "world cup", "euro ", "european championship", "nations", "copa america", "africa cup", "asian cup", "gold cup",
     "olympic", "friendly international", "confederations"
 ]
 
 COUNTRY_NAMES = {
-    "russia", "germany", "france", "italy", "spain", "england", "portugal",
-    "brazil", "argentina", "tunisia", "thailand", "switzerland", "austria",
-    "belgium", "netherlands", "croatia", "serbia", "greece", "turkey",
-    "japan", "korea", "china", "india", "australia", "mexico", "usa",
-    "canada", "morocco", "egypt", "saudi arabia", "uae", "qatar", "iran",
-    "iraq", "uzbekistan", "kazakhstan", "ukraine", "poland", "czech",
-    "slovakia", "hungary", "romania", "bulgaria", "denmark", "norway",
-    "sweden", "finland", "iceland", "ireland", "scotland", "wales",
-    "россия", "германия", "франция", "италия", "испания",
-    "англия", "португалия", "бразилия", "аргентина", "тунис", "таиланд",
-    "швейцария", "австрия", "бельгия", "нидерланды", "хорватия", "сербия",
-    "греция", "турция", "япония", "корея", "китай", "индия", "австралия",
-    "мексика", "сша", "канада", "марокко", "египет", "саудовская аравия",
-    "оаэ", "катар", "иран", "ирак", "узбекистан", "казахстан", "украина",
-    "польша", "чехия", "словакия", "венгрия", "румыния", "болгария",
-    "дания", "норвегия", "швеция", "финляндия", "исландия", "ирландия",
-    "шотландия", "уэльс",
+    "russia", "germany", "france", "italy", "spain", "england", "portugal", "brazil", "argentina", "tunisia", "thailand",
+    "switzerland", "austria", "belgium", "netherlands", "croatia", "serbia", "greece", "turkey", "japan", "korea", "china",
+    "india", "australia", "mexico", "usa", "canada", "morocco", "egypt", "saudi arabia", "uae", "qatar", "iran", "iraq",
+    "uzbekistan", "kazakhstan", "ukraine", "poland", "czech", "slovakia", "hungary", "romania", "bulgaria", "denmark",
+    "norway", "sweden", "finland", "iceland", "ireland", "scotland", "wales",
+    "россия", "германия", "франция", "италия", "испания", "англия", "португалия", "бразилия", "аргентина", "тунис", "таиланд",
+    "швейцария", "австрия", "бельгия", "нидерланды", "хорватия", "сербия", "греция", "турция", "япония", "корея", "китай",
+    "индия", "австралия", "мексика", "сша", "канада", "марокко", "египет", "саудовская аравия", "оаэ", "катар", "иран",
+    "ирак", "узбекистан", "казахстан", "украина", "польша", "чехия", "словакия", "венгрия", "румыния", "болгария",
+    "дания", "норвегия", "швеция", "финляндия", "исландия", "ирландия", "шотландия", "уэльс",
 }
 
 FOTMOB_ID_OVERRIDES = {
-    "Порт": 165255, "Порт ФК": 165255, "Порту": 9775,
-    "Тун": 10191, "Акрон": 1068364, "Акрон Тольятти": 1068364,
-    "Родина": 1066681, "Родина Москва": 1066681,
-    "Истанбул Башакшехир": 10068, "Атлетик Бильбао": 9807,
-    "Синт-Трёйден": 10232, "Эштрела Амадора": 14303,
-    "Витория Гимарайнш": 9778, "Витория БА": 9779,
+    "Порт": 165255, "Порт ФК": 165255, "Порту": 9775, "Тун": 10191, "Акрон": 1068364, "Акрон Тольятти": 1068364,
+    "Родина": 1066681, "Родина Москва": 1066681, "Истанбул Башакшехир": 10068, "Атлетик Бильбао": 9807,
+    "Синт-Трёйден": 10232, "Эштрела Амадора": 14303, "Витория Гимарайнш": 9778, "Витория БА": 9779,
     "Нью-Йорк Ред Буллс": 9805, "Саламанка УДС": 82679,
 }
 
@@ -235,50 +125,36 @@ DIRECT_LOGO_URLS = {
 }
 
 TEAM_OVERRIDES = {
-    "Байер 04": "Bayer Leverkusen", "Майнц 05": "Mainz", "Интер Милан": "Inter",
-    "Комо": "Como", "Атлетик Бильбао": "Athletic Bilbao", "Спортинг Лиссабон": "Sporting CP",
-    "Крылья Советов": "Krylia Sovetov", "Брюгге": "Club Brugge", "Кёльн": "Koln",
-    "Факел": "Fakel Voronezh", "Рубин": "Rubin Kazan", "Енисей": "Yenisey",
-    "Акрон": "Akron Tolyatti", "Родина": "Rodina Moscow", "Алавес": "Alaves",
-    "Венеция": "Venezia", "Витория Гимарайнш": "Vitoria Guimaraes", "Витория БА": "Vitoria Setubal",
-    "Виктория Пльзень": "Viktoria Plzen", "Юнион Сен-Жиллуаз": "Union St. Gilloise",
-    "Дармштадт 98": "Darmstadt", "Торренсе": "Torrent", "Синт-Трёйден": "Sint-Truiden",
-    "Аль-Кадисия Хубар": "Al-Qadsiah", "Аль-Шабаб Рияд": "Al-Shabab", "Аль-Наср Рияд": "Al-Nassr",
-    "Аль-Хиляль Рияд": "Al-Hilal", "Аль-Ахли Джидда": "Al-Ahli", "Аль-Иттихад Джидда": "Al-Ittihad",
-    "Аль-Иттифак": "Al-Ettifaq", "Аль-Таавун": "Al-Taawoun", "Аль-Фатех": "Al-Fateh",
-    "Аль-Фейха": "Al-Fayha", "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazem",
-    "Эстеглаль Тегеран": "Esteghlal", "Тэджон Ситизен": "Daejeon Citizen", "Чонбук": "Jeonbuk",
-    "Штурм": "Sturm Graz", "Камбур": "Cambuur", "ВПР Астана": "Astana", "Хромтау": "Khromtau",
+    "Байер 04": "Bayer Leverkusen", "Майнц 05": "Mainz", "Интер Милан": "Inter", "Комо": "Como", "Атлетик Бильбао": "Athletic Bilbao",
+    "Спортинг Лиссабон": "Sporting CP", "Крылья Советов": "Krylia Sovetov", "Брюгге": "Club Brugge", "Кёльн": "Koln",
+    "Факел": "Fakel Voronezh", "Рубин": "Rubin Kazan", "Енисей": "Yenisey", "Акрон": "Akron Tolyatti", "Родина": "Rodina Moscow",
+    "Алавес": "Alaves", "Венеция": "Venezia", "Витория Гимарайнш": "Vitoria Guimaraes", "Витория БА": "Vitoria Setubal",
+    "Виктория Пльзень": "Viktoria Plzen", "Юнион Сен-Жиллуаз": "Union St. Gilloise", "Дармштадт 98": "Darmstadt",
+    "Торренсе": "Torrent", "Синт-Трёйден": "Sint-Truiden", "Аль-Кадисия Хубар": "Al-Qadsiah", "Аль-Шабаб Рияд": "Al-Shabab",
+    "Аль-Наср Рияд": "Al-Nassr", "Аль-Хиляль Рияд": "Al-Hilal", "Аль-Ахли Джидда": "Al-Ahli", "Аль-Иттихад Джидда": "Al-Ittihad",
+    "Аль-Иттифак": "Al-Ettifaq", "Аль-Таавун": "Al-Taawoun", "Аль-Фатех": "Al-Fateh", "Аль-Фейха": "Al-Fayha",
+    "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazem", "Эстеглаль Тегеран": "Esteghlal", "Тэджон Ситизен": "Daejeon Citizen",
+    "Чонбук": "Jeonbuk", "Штурм": "Sturm Graz", "Камбур": "Cambuur", "ВПР Астана": "Astana", "Хромтау": "Khromtau",
     "Кайсар": "Kaisar", "Нью-Йорк Ред Буллс": "New York Red Bulls", "Лос-Анджелес Гэлакси": "LA Galaxy",
-    "Текстильщик Иваново": "Tekstilshchik", "Памплона": "Osasuna", "Анайтасуна": "Anaitasuna",
-    "Саламанка УДС": "Salamanca UDS", "Реус Реддис": "Reus", "Волна Ковернино": "Volna",
-    "Конган": "Khon Kaen", "Сабах Баку": "Sabah", "Истанбул Башакшехир": "Istanbul Basaksehir",
-    "Унив. Крайова": "Universitatea Craiova", "Интер Эскальдес": "Inter Club d'Escaldes",
-    "Эштрела Амадора": "Estrela Amadora",
-    "Солсбери": "Salisbury FC", "Алвчерч": "Alvechurch FC", "Йовил Таун": "Yeovil Town",
-    "Галифакс Таун": "FC Halifax Town", "Таранкон": "Tarazona", "Стаффорд Рейнджерс": "Stafford Rangers",
-    "Вустер Сити": "Worcester City", "Рашден & Даймондс": "AFC Rushden & Diamonds",
-    "Хорнчерч": "Hornchurch", "Олтринчэм": "Altrincham", "Харборо Таун": "Harborough Town",
-    "Аль-Нахда Бурайми": "Al-Nahda Buraimi", "Аль-Вахда Абу-Даби": "Al Wahda Abu Dhabi",
-    "Аль-Файсали Амман": "Al Faisaly Amman", "Аль-Джазира Абу-Даби": "Al Jazira Abu Dhabi",
-    "Аль-Мухаррак": "Al-Muharraq",
+    "Текстильщик Иваново": "Tekstilshchik", "Памплона": "Osasuna", "Анайтасуна": "Anaitasuna", "Саламанка УДС": "Salamanca UDS",
+    "Реус Реддис": "Reus", "Волна Ковернино": "Volna", "Конган": "Khon Kaen", "Сабах Баку": "Sabah", "Истанбул Башакшехир": "Istanbul Basaksehir",
+    "Унив. Крайова": "Universitatea Craiova", "Интер Эскальдес": "Inter Club d'Escaldes", "Эштрела Амадора": "Estrela Amadora",
+    "Солсбери": "Salisbury FC", "Алвчерч": "Alvechurch FC", "Йовил Таун": "Yeovil Town", "Галифакс Таун": "FC Halifax Town",
+    "Таранкон": "Tarazona", "Стаффорд Рейнджерс": "Stafford Rangers", "Вустер Сити": "Worcester City", "Рашден & Даймондс": "AFC Rushden & Diamonds",
+    "Хорнчерч": "Hornchurch", "Олтринчэм": "Altrincham", "Харборо Таун": "Harborough Town", "Аль-Нахда Бурайми": "Al-Nahda Buraimi",
+    "Аль-Вахда Абу-Даби": "Al Wahda Abu Dhabi", "Аль-Файсали Амман": "Al Faisaly Amman", "Аль-Джазира Абу-Даби": "Al Jazira Abu Dhabi", "Аль-Мухаррак": "Al-Muharraq",
 }
 
 LEAGUE_COUNTRY_HINTS = {
-    "португал": "portugal", "таиланд": "thailand", "тай": "thailand", "англ": "england",
-    "испан": "spain", "итал": "italy", "герман": "germany", "франц": "france",
-    "бразил": "brazil", "аргентин": "argentina", "турц": "turkey", "росси": "russia",
-    "украин": "ukraine", "казах": "kazakhstan", "нидерланд": "netherlands", "голланд": "netherlands",
-    "бельги": "belgium", "швейцар": "switzerland", "австри": "austria", "польш": "poland",
-    "чехи": "czech", "хорват": "croatia", "серби": "serbia", "грец": "greece",
-    "израил": "israel", "египет": "egypt", "саудов": "saudi", "эмират": "uae",
-    "япон": "japan", "корея": "korea", "китай": "china", "инди": "india",
-    "австрал": "australia", "мексик": "mexico", "сша": "usa", "америк": "usa",
-    "шотланд": "scotland", "ирланд": "ireland", "дания": "denmark", "норвег": "norway",
-    "швец": "sweden", "финлянд": "finland", "румын": "romania", "болгар": "bulgaria",
-    "венгр": "hungary", "словен": "slovenia", "словак": "slovakia", "азерб": "azerbaijan",
-    "армен": "armenia", "грузи": "georgia", "узбек": "uzbekistan", "киргиз": "kyrgyzstan",
-    "таджик": "tajikistan"
+    "португал": "portugal", "таиланд": "thailand", "тай": "thailand", "англ": "england", "испан": "spain", "итал": "italy",
+    "герман": "germany", "франц": "france", "бразил": "brazil", "аргентин": "argentina", "турц": "turkey", "росси": "russia",
+    "украин": "ukraine", "казах": "kazakhstan", "нидерланд": "netherlands", "голланд": "netherlands", "бельги": "belgium",
+    "швейцар": "switzerland", "австри": "austria", "польш": "poland", "чехи": "czech", "хорват": "croatia", "серби": "serbia",
+    "грец": "greece", "израил": "israel", "египет": "egypt", "саудов": "saudi", "эмират": "uae", "япон": "japan", "корея": "korea",
+    "китай": "china", "инди": "india", "австрал": "australia", "мексик": "mexico", "сша": "usa", "америк": "usa",
+    "шотланд": "scotland", "ирланд": "ireland", "дания": "denmark", "норвег": "norway", "швец": "sweden", "финлянд": "finland",
+    "румын": "romania", "болгар": "bulgaria", "венгр": "hungary", "словен": "slovenia", "словак": "slovakia", "азерб": "azerbaijan",
+    "армен": "armenia", "грузи": "georgia", "узбек": "uzbekistan", "киргиз": "kyrgyzstan", "таджик": "tajikistan",
 }
 
 LOGO_STATS = {"fotmob": 0, "thesportsdb": 0, "direct": 0, "fallback": 0, "cache": 0}
@@ -299,10 +175,8 @@ def _normalize(s):
 def is_allowed_league(league):
     if not league or league == "Футбол": return False
     low = league.lower().strip()
-    # 1. Blacklist приоритетнее
     for f in FORBIDDEN_LEAGUE_WORDS:
         if f in low: return False
-    # 2. Whitelist через regex
     for pattern in ALLOWED_LEAGUE_PATTERNS:
         try:
             if re.search(pattern, low):
@@ -523,48 +397,50 @@ def _is_match_live(ev, now_ts):
     return True
 
 
-def get_live_data_from_infos(eid, live_by_id, misc_by_id):
-    """Извлекает (score1, score2, timer) из liveEventInfos / eventMiscs."""
-    li = live_by_id.get(eid)
-    if li:
-        s1 = _first_not_none(li, ["s1", "c1", "team1Score", "homeScore", "score1"])
-        s2 = _first_not_none(li, ["s2", "c2", "team2Score", "awayScore", "score2"])
-        timer = _first_not_none(li, ["timer", "time", "currentMinute", "minute"])
+def _extract_score_from_live_info(li):
+    """Извлекает (s1, s2, timer_str) из одного liveEventInfo."""
+    if not li: return None, None, None
+    timer_str = li.get("timer")  # "45:00"
+    # scores: [[{c1,c2}], [{c1,c2,title}...]]
+    scores = li.get("scores")
+    s1 = s2 = None
+    if isinstance(scores, list):
+        for block in scores:
+            if isinstance(block, list) and block:
+                first = block[0]
+                if isinstance(first, dict):
+                    c1 = first.get("c1"); c2 = first.get("c2")
+                    if c1 is not None and c2 is not None:
+                        try:
+                            s1 = int(c1); s2 = int(c2)
+                            break
+                        except: pass
+    if s1 is None:
+        s1 = _first_not_none(li, ["c1", "s1", "team1Score", "homeScore"])
+        s2 = _first_not_none(li, ["c2", "s2", "team2Score", "awayScore"])
         if s1 is not None and s2 is not None:
-            try: return int(s1), int(s2), (int(timer) if timer is not None else None)
-            except: pass
-    
-    em = misc_by_id.get(eid)
-    if em:
-        for key in ("liveInfo", "score", "live", "liveData"):
-            info = em.get(key)
-            if isinstance(info, dict):
-                s1 = _first_not_none(info, ["s1", "c1", "team1", "home", "score1"])
-                s2 = _first_not_none(info, ["s2", "c2", "team2", "away", "score2"])
-                timer = _first_not_none(info, ["timer", "time", "minute", "currentMinute"])
-                if s1 is not None and s2 is not None:
-                    try: return int(s1), int(s2), (int(timer) if timer is not None else None)
-                    except: pass
-    return None, None, None
+            try: s1 = int(s1); s2 = int(s2)
+            except: s1 = s2 = None
+    # Минута из timer "45:00" → 45
+    minute = None
+    if timer_str and isinstance(timer_str, str) and ":" in timer_str:
+        try: minute = int(timer_str.split(":")[0])
+        except: pass
+    return s1, s2, minute
 
 
 def format_total_param(p):
-    """Fonbet отдаёт p в разных форматах: 2.5, 25, 250 — нормализуем."""
     if p is None: return None
     try: p_val = float(p)
     except: return str(p)
-    if p_val != int(p_val):
-        return f"{p_val:g}"
+    if p_val != int(p_val): return f"{p_val:g}"
     p_int = int(p_val)
-    if p_int >= 100:
-        return f"{p_int / 100:g}"
-    elif p_int >= 10:
-        return f"{p_int / 10:g}"
+    if p_int >= 100: return f"{p_int / 100:g}"
+    elif p_int >= 10: return f"{p_int / 10:g}"
     return str(p_int)
 
 
 def collect_fonbet_data(data):
-    """Возвращает: events, factors_by_event, sports, live_by_id, misc_by_id."""
     if not data: return [], {}, [], {}, []
     events = data.get("events", [])
     factors_raw = data.get("factors", [])
@@ -581,32 +457,26 @@ def collect_fonbet_data(data):
         eid = cf.get("e")
         if eid: factors_by_event.setdefault(eid, []).extend(cf.get("factors", []))
     
-    live_by_id = {}
+    live_by_event_id = {}
     for li in live_infos:
-        eid = li.get("id")
-        if eid: live_by_id[eid] = li
+        eid = li.get("eventId")  # ⚠️ было id — исправлено
+        if eid: live_by_event_id[eid] = li
     
     misc_by_id = {}
     for em in event_miscs:
         eid = em.get("id")
         if eid: misc_by_id[eid] = em
     
-    return events, factors_by_event, sports_list, live_by_id, misc_by_id
+    return events, factors_by_event, sports_list, live_by_event_id, misc_by_id
 
 
 def parse_fonbet_odds(factors_list):
-    """Парсит рынки + дедуплицирует по (fid, p, gs)."""
-    seen = set()
+    """Парсит рынки + дедуплицирует по (group_name, name)."""
+    seen_market_names = set()  # (group_name, name)
     markets = {}
     for factor in factors_list:
         fid = factor.get("f")
         if fid not in FONBET_FACTORS: continue
-        p = factor.get("p")
-        gs = factor.get("gs", 0)
-        key = (fid, p, gs)
-        if key in seen: continue
-        seen.add(key)
-        
         group_name, base_name, has_param = FONBET_FACTORS[fid]
         odds = factor.get("v")
         if odds is None: continue
@@ -615,24 +485,24 @@ def parse_fonbet_odds(factors_list):
         if odds <= 1.0: continue
         name = base_name
         if has_param:
-            p_str = format_total_param(p)
+            p_str = format_total_param(factor.get("p"))
             if p_str is None: continue
             name = f"{base_name} {p_str}"
+        dedup_key = (group_name, name)
+        if dedup_key in seen_market_names: continue
+        seen_market_names.add(dedup_key)
         if group_name not in markets: markets[group_name] = []
         markets[group_name].append({"name": name, "odds": odds})
     return markets
 
 
 def filter_decided_markets(markets, s1, s2):
-    """Убирает 100% сыгравшие рынки для live."""
     if s1 is None or s2 is None: return markets
     filtered = {}
     total = s1 + s2
-    
     for group_name, outcomes in markets.items():
         if group_name == "Обе забьют":
-            if s1 > 0 and s2 > 0:
-                continue  # уже обе забили — всё решено
+            if s1 > 0 and s2 > 0: continue
             filtered[group_name] = outcomes
         elif group_name == "Тотал":
             new_outs = []
@@ -643,13 +513,10 @@ def filter_decided_markets(markets, s1, s2):
                 elif name.startswith("ТМ "): limit_str = name[3:]
                 if limit_str:
                     try: limit = float(limit_str)
-                    except:
-                        new_outs.append(o); continue
-                    if total > limit:
-                        continue  # линия сыграла
+                    except: new_outs.append(o); continue
+                    if total > limit: continue
                 new_outs.append(o)
-            if new_outs:
-                filtered[group_name] = new_outs
+            if new_outs: filtered[group_name] = new_outs
         else:
             filtered[group_name] = outcomes
     return filtered
@@ -715,13 +582,18 @@ async def main():
     
     all_events = list(events_by_id.values())
     print(f"⚽ Всего событий (после дедупликации): {len(all_events)}")
-    print(f"📺 Live инфо: {len(all_live)} | Miscs: {len(all_miscs)}")
+    print(f"📺 Live инфо: {len(all_live)}")
     
-    # Debug: пример live info
-    if all_live:
-        for eid, li in list(all_live.items())[:2]:
-            print(f"   🔍 live_info[{eid}]: keys={list(li.keys())}, sample={li}")
+    # Карта sportId → (sport_name, is_football)
+    sport_name_by_id = {}
+    sport_kind_by_id = {}
+    for sp in all_sports:
+        sp_id = sp.get('id'); sp_name = sp.get('name', ''); sp_kind = sp.get('kind')
+        if sp_id and sp_name:
+            sport_name_by_id[sp_id] = sp_name
+            sport_kind_by_id[sp_id] = sp_kind
     
+    # Отдельно карта tournamentId → name (для лиг)
     tournament_by_id = {}
     for sp in all_sports:
         if sp.get('kind') == 'sport': continue
@@ -732,6 +604,7 @@ async def main():
     # === ФИЛЬТРАЦИЯ ===
     valid_events = []
     skipped_sport = 0
+    skipped_not_football = 0
     skipped_blacklist = 0
     skipped_whitelist = 0
     skipped_no_teams = 0
@@ -755,11 +628,25 @@ async def main():
             skipped_time += 1
             continue
         
-        eid = ev.get("id")
-        s1, s2, timer = get_live_data_from_infos(eid, all_live, all_miscs)
-        is_live = s1 is not None and s2 is not None and _is_match_live(ev, now_ts)
+        sid = ev.get("sportId")
+        # ⚠️ ФИЛЬТР ТОЛЬКО ФУТБОЛ: sportId должен ссылаться на sport с name='Футбол'
+        sport_name = sport_name_by_id.get(sid, "")
+        sport_kind = sport_kind_by_id.get(sid, "")
+        if sport_kind == 'sport' and sport_name.lower() != 'футбол':
+            skipped_not_football += 1
+            continue
         
-        # Если live-инфы нет — по времени
+        # Если sid ведёт на турнир, проверяем через родительский спорт? 
+        # В Fonbet sportId обычно ссылается на турнир (kind='segment'), а kind/rootKind=1 говорит что футбол.
+        # Поэтому фильтр по sportId == 1 (прямой футбол) или по спорту из sports с kind='sport' и name='Футбол'.
+        # Дополнительно: если sport_name содержит баскетбол/хоккей — отсекаем.
+        if sport_name and any(w in sport_name.lower() for w in ["баскетбол", "basketball", "хоккей", "hockey", "теннис", "tennis"]):
+            skipped_not_football += 1
+            continue
+        
+        eid = ev.get("id")
+        s1, s2, timer = _extract_score_from_live_info(all_live.get(eid))
+        is_live = s1 is not None and s2 is not None and _is_match_live(ev, now_ts)
         if not is_live:
             is_live = _is_match_live(ev, now_ts) and timer is not None
         
@@ -771,7 +658,6 @@ async def main():
                 skipped_time += 1
                 continue
         
-        sid = ev.get("sportId")
         league = tournament_by_id.get(sid, "")
         
         text = f"{t1} {t2}".lower()
@@ -788,7 +674,7 @@ async def main():
         if is_live: live_count += 1
         else: prematch_count += 1
     
-    print(f"🔎 Отсев: sport/kind: {skipped_sport} | нет команд: {skipped_no_teams} | время: {skipped_time} | blacklist: {skipped_blacklist} | whitelist: {skipped_whitelist}")
+    print(f"🔎 Отсев: sport/kind: {skipped_sport} | не футбол: {skipped_not_football} | нет команд: {skipped_no_teams} | время: {skipped_time} | blacklist: {skipped_blacklist} | whitelist: {skipped_whitelist}")
     print(f"🎯 Валидных матчей: {len(valid_events)} (LIVE: {live_count} | Прематч: {prematch_count})")
     
     if rejected_leagues:
@@ -805,7 +691,7 @@ async def main():
         print("⚠️ Нет валидных матчей.")
         return
     
-    # === КОМАНДЫ ===
+    # === КОМАНДЫ + ЛОГОТИПЫ (как было) ===
     teams_ru = set()
     for ev, _, _, _, _, _, _ in valid_events:
         if ev.get("team1"): teams_ru.add(ev.get("team1"))
@@ -818,7 +704,6 @@ async def main():
         teams_to_translate.add(t)
     
     print(f"🔤 Новых команд для поиска: {len(teams_to_translate)}/{len(teams_ru)}")
-    
     if teams_to_translate:
         name_en_map = batch_translate_ru_to_en(list(teams_to_translate))
     else:
@@ -857,7 +742,6 @@ async def main():
         factors_list = all_factors.get(ev_id, [])
         markets_data = parse_fonbet_odds(factors_list)
         
-        # Для live — фильтруем решённые
         if is_live and s1 is not None and s2 is not None:
             markets_data = filter_decided_markets(markets_data, s1, s2)
         
