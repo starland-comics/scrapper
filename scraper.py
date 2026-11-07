@@ -7,7 +7,7 @@ import os
 import re
 import hashlib
 import base64
-from collections import Counter
+from collections import Counter, defaultdict
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
@@ -31,28 +31,18 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-# === РАСШИРЕННЫЙ СЛОВАРЬ ФАКТОРОВ ===
+# === СЛОВАРЬ ФАКТОРОВ (Пока базовые + расширенные, ждем dump) ===
 FONBET_FACTORS = {
-    # 1X2 основная
     921: ("Исход", "П1", False), 922: ("Исход", "Х", False), 923: ("Исход", "П2", False),
-    # Двойной шанс
     924: ("Двойной шанс", "1Х", False), 925: ("Двойной шанс", "12", False), 926: ("Двойной шанс", "Х2", False),
-    # Обе забьют
     928: ("Обе забьют", "Да", False), 929: ("Обе забьют", "Нет", False),
-    # Тотал (главная линия)
     930: ("Тотал", "ТБ", True), 931: ("Тотал", "ТМ", True),
-    # Форы (главная линия)
     932: ("Фора", "Ф1", True), 933: ("Фора", "Ф2", True),
-    # Индивидуальные тоталы
     934: ("ИТБ1", "ТБ", True), 935: ("ИТМ1", "ТМ", True),
     936: ("ИТБ2", "ТБ", True), 937: ("ИТМ2", "ТМ", True),
-    # 1-й тайм Исход
     938: ("1-й тайм Исход", "П1", False), 939: ("1-й тайм Исход", "Х", False), 940: ("1-й тайм Исход", "П2", False),
-    # 1-й тайм Тотал
     941: ("1-й тайм Тотал", "ТБ", True), 942: ("1-й тайм Тотал", "ТМ", True),
-    # 1-й тайм Фора
     943: ("1-й тайм Фора", "Ф1", True), 944: ("1-й тайм Фора", "Ф2", True),
-    # Альтернативные линии (диапазон 11-24)
     11: ("Тотал", "ТБ", True), 12: ("Тотал", "ТМ", True),
     13: ("Фора", "Ф1", True), 14: ("Фора", "Ф2", True),
     15: ("Тотал", "ТБ", True), 16: ("Тотал", "ТМ", True),
@@ -403,8 +393,7 @@ def _parse_start_ts(ev):
     except: return 0
 
 
-def build_sport_hierarchy(all_sports):
-    """Строит карту: id → top-sport-entry. Ищет родителя по parentId/sportId/parent."""
+def _build_sport_hierarchy(all_sports):
     entry_by_id = {}
     parent_by_id = {}
     for sp in all_sports:
@@ -510,11 +499,9 @@ async def main():
     all_events = list(events_by_id.values())
     print(f"⚽ Всего событий: {len(all_events)}")
     
-    # === СТРОИМ ИЕРАРХИЮ СПОРТА ===
-    entry_by_id, parent_by_id, top_by_id = build_sport_hierarchy(all_sports)
+    entry_by_id, parent_by_id, top_by_id = _build_sport_hierarchy(all_sports)
     print(f"🏟 sports[] entries: {len(entry_by_id)}, с родителем: {len(parent_by_id)}")
     
-    # Debug: проверим 5 известных турниров
     print(f"   🔍 Проверка известных sportId:")
     for test_sid in [11935, 11918, 11922, 11924, 11920]:
         entry = entry_by_id.get(test_sid)
@@ -559,7 +546,6 @@ async def main():
         if st <= 0:
             skipped_time += 1; continue
         
-        # Проверка: sportId → top sport = Футбол
         sid = ev.get("sportId")
         top_sport = top_by_id.get(sid)
         if not top_sport:
@@ -601,6 +587,7 @@ async def main():
     # === DEBUG: DUMP ФАКТОРОВ (один раз за прогон) ===
     print(f"\n🔍 [FACTOR DUMP] Ищу матч с максимумом факторов:")
     best_ev = None
+    best_league = ""
     best_count = 0
     for ev, lg in valid_events:
         eid = ev.get("id")
@@ -608,13 +595,57 @@ async def main():
         if cnt > best_count:
             best_count = cnt
             best_ev = ev
+            best_league = lg
     if best_ev:
         eid = best_ev.get("id")
         factors = all_factors.get(eid, [])
-        print(f"   {best_ev.get('team1')} vs {best_ev.get('team2')} | лига: {tournament_by_id.get(best_ev.get('sportId'), '?')} | факторов: {len(factors)}")
-        print(f"   Все факторы (f | gs | p | v):")
-        for f in factors[:80]:
-            print(f"      f={f.get('f'):>4} | gs={f.get('gs'):>3} | p={str(f.get('p')):>8} | v={f.get('v')}")
+        print(f"\n   {best_ev.get('team1')} vs {best_ev.get('team2')} | лига: {best_league} | факторов: {len(factors)}\n")
+        
+        # Группировка по f-ID
+        fid_map = defaultdict(lambda: {"p_values": set(), "count": 0, "gs_set": set()})
+        for f in factors:
+            fid = f.get('f')
+            if fid is None: continue
+            p = f.get('p')
+            gs = f.get('gs')
+            fid_map[fid]["p_values"].add(p)
+            fid_map[fid]["count"] += 1
+            fid_map[fid]["gs_set"].add(gs)
+        
+        print(f"   📊 Уникальных f-ID: {len(fid_map)}")
+        print(f"   {'f':>4} | {'count':>5} | {'gs':>8} | p-значения")
+        print(f"   {'-'*70}")
+        for fid in sorted(fid_map.keys()):
+            info = fid_map[fid]
+            # Сортируем p (None в конец)
+            p_list = sorted(
+                [str(x) for x in info["p_values"] if x is not None],
+                key=lambda x: (float(x) if x.replace('-','').replace('.','').isdigit() else 0)
+            )
+            if None in info["p_values"]:
+                p_list.append("None")
+            p_display = ", ".join(p_list[:10])
+            if len(p_list) > 10:
+                p_display += f" ... (+{len(p_list)-10})"
+            gs_display = ",".join(sorted([str(x) for x in info["gs_set"] if x is not None]))[:8]
+            print(f"   f={fid:>4} | {info['count']:>5} | {gs_display:>8} | [{p_display}]")
+        
+        # Дополнительно — структура первых 5 факторов целиком
+        print(f"\n   🔍 Полная структура первых 5 факторов:")
+        for f in factors[:5]:
+            print(f"      {f}")
+        
+        # Какой gs что содержит (первые 10 gs)
+        print(f"\n   🔍 Распределение по gs (группам):")
+        gs_groups = defaultdict(list)
+        for f in factors:
+            gs = f.get('gs')
+            fid = f.get('f')
+            if gs is not None and fid is not None:
+                gs_groups[gs].append(fid)
+        for gs_id in sorted(gs_groups.keys())[:15]:
+            fids = sorted(set(gs_groups[gs_id]))
+            print(f"      gs={gs_id:>3}: {len(gs_groups[gs_id])} факторов, f-IDs: {fids}")
     print()
     
     # === ЛОГОТИПЫ ===
