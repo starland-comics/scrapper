@@ -24,6 +24,7 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
+# Только валидные для oddsharvester слаги (проверено stderr)
 ODDSPORTAL_LEAGUES = [
     "england-premier-league",
     "spain-laliga",
@@ -31,12 +32,8 @@ ODDSPORTAL_LEAGUES = [
     "germany-bundesliga",
     "france-ligue-1",
     "russia-premier-league",
-    "netherlands-eredivisie",
-    "portugal-liga-portugal",
     "brazil-serie-a",
     "usa-mls",
-    "europe-champions-league",
-    "europe-europa-league",
 ]
 
 BLACKLIST_WORDS = [
@@ -444,10 +441,10 @@ def find_logo(cache, team, hint):
             return val
     return ""
 
-# ============ ODDSHARVESTER ИНТЕГРАЦИЯ ============
+# ============ ODDSHARVESTER ============
 
 def fetch_full_odds_via_oddsharvester():
-    """Парсит OddsPortal по всем топ-лигам одним вызовом."""
+    """Парсит OddsPortal по валидным топ-лигам одним вызовом."""
     print("📥 Запускаю OddsHarvester для сбора полной росписи...")
     
     markets = "1x2,btts,over_under,asian_handicap,double_chance,dnb"
@@ -483,6 +480,8 @@ def fetch_full_odds_via_oddsharvester():
         
         if isinstance(data, list):
             print(f"   ✅ OddsHarvester собрал данные для {len(data)} матчей")
+            if data:
+                print(f"   🔍 Структура первого матча (ключи): {list(data[0].keys())}")
             return data
         else:
             print(f"   ⚠️ Неожиданный тип данных: {type(data).__name__}")
@@ -502,7 +501,13 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
     if not odd_data:
         return result
     
-    # Индекс матчей Olimpbet по нормализованным названиям
+    # debug — что реально пришло в первом матче
+    if odd_data:
+        sample = odd_data[0]
+        print(f"   🔍 sample keys: {list(sample.keys())}")
+        if "odds" in sample and sample["odds"]:
+            print(f"   🔍 sample odds[0]: {sample['odds'][0] if isinstance(sample['odds'], list) else list(sample['odds'].items())[:1]}")
+    
     olimp_index = []
     for ev_id, (ev, status, league) in unique_matches.items():
         t1_ru = ev.get("team1Name", "")
@@ -517,8 +522,9 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
     
     matched_count = 0
     for match in odd_data:
-        home = (match.get("home_team") or match.get("home") or "").strip()
-        away = (match.get("away_team") or match.get("away") or "").strip()
+        # oddsharvester возвращает home_team/away_team или home/away
+        home = (match.get("home_team") or match.get("home") or match.get("homeTeam") or "").strip()
+        away = (match.get("away_team") or match.get("away") or match.get("awayTeam") or "").strip()
         
         if not home or not away: continue
         
@@ -543,10 +549,25 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
         markets = {}
         odds_list = match.get("odds") or []
         
+        # odds может быть dict (если рынки по ключам) или list
+        if isinstance(odds_list, dict):
+            # превращаем в плоский список
+            flat = []
+            for market_name, market_val in odds_list.items():
+                if isinstance(market_val, dict):
+                    for outcome, price in market_val.items():
+                        flat.append({"market": market_name, "outcome": outcome, "price": price})
+                elif isinstance(market_val, list):
+                    for item in market_val:
+                        if isinstance(item, dict):
+                            flat.append({"market": market_name, **item})
+            odds_list = flat
+        
         for odd_item in odds_list:
-            market_name = (odd_item.get("market") or "").strip()
-            outcome = (odd_item.get("outcome") or "").strip()
-            price = odd_item.get("price") or odd_item.get("odds")
+            if not isinstance(odd_item, dict): continue
+            market_name = (odd_item.get("market") or odd_item.get("market_name") or "").strip()
+            outcome = (odd_item.get("outcome") or odd_item.get("outcome_name") or odd_item.get("name") or "").strip()
+            price = odd_item.get("price") or odd_item.get("odds") or odd_item.get("odd")
             
             if price is None: continue
             try: price = float(price)
@@ -764,7 +785,6 @@ async def main():
 
     print(f"🎯 Уникальных матчей: {len(unique_matches)}")
 
-    # Перевод названий команд RU→EN
     teams_ru = set()
     for ev, _, _ in unique_matches.values():
         if ev.get("team1Name"): teams_ru.add(ev.get("team1Name"))
@@ -772,12 +792,10 @@ async def main():
     print(f"🔤 Перевожу {len(teams_ru)} названий команд...")
     name_en_map = batch_translate_ru_to_en(list(teams_ru))
 
-    # OddsHarvester: полная роспись
     odd_data = fetch_full_odds_via_oddsharvester()
     odds_map = parse_oddsharvester_output(odd_data, unique_matches, name_en_map)
     print(f"✅ Получено полных росписей с OddsHarvester: {len(odds_map)}")
 
-    # Логотипы
     missing = set()
     for ev, _, league_name in unique_matches.values():
         for t in (ev.get("team1Name"), ev.get("team2Name")):
@@ -793,7 +811,6 @@ async def main():
         await firebase_put("team_logos", _cache_to_fb(logo_cache))
         if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
 
-    # Собираем matches_dict
     matches_dict = {}
     with_full = 0
     with_base = 0
@@ -811,7 +828,6 @@ async def main():
         p1 = px = p2 = None
         markets_data = {}
 
-        # Базовые из Olimpbet
         for out in ev.get("outcomes", []):
             gn = out.get("groupName", "Другое").strip()
             sn = out.get("shortName", "").strip()
@@ -824,7 +840,6 @@ async def main():
                 elif sn in ["X", "Х"]: px = prob
                 elif sn in ["П2", "2"]: p2 = prob
 
-        # Полная роспись из OddsHarvester
         if ev_id in odds_map:
             odd_markets = odds_map[ev_id]
             for gn, outs in odd_markets.items():
