@@ -374,23 +374,14 @@ def fetch_fonbet_data(url):
 
 
 def collect_fonbet_data(data, is_live):
-    """Возвращает: events_with_live [(ev, is_live)], factors_by_event, competitions_map, event_to_comp."""
+    """Собирает events, factors, sport-tree."""
     if not data:
-        return [], {}, {}, {}
+        return [], {}, {}
     
     events = data.get("events", [])
     factors_raw = data.get("factors", [])
     custom_factors_raw = data.get("customFactors", [])
-    
-    competitions_list = data.get("competitions", [])
-    competitions_map = {c.get("id"): c.get("name", "") for c in competitions_list}
-    
-    # Связь event → competition через competitions[].events
-    event_to_comp = {}
-    for c in competitions_list:
-        comp_name = c.get("name", "")
-        for eid in c.get("events", []) or []:
-            event_to_comp[eid] = comp_name
+    sports_list = data.get("sports", [])
     
     # Группируем факторы по eventId
     factors_by_event = {}
@@ -404,8 +395,7 @@ def collect_fonbet_data(data, is_live):
             factors_by_event.setdefault(eid, []).extend(cf.get("factors", []))
     
     events_with_live = [(ev, is_live) for ev in events]
-    
-    return events_with_live, factors_by_event, competitions_map, event_to_comp
+    return events_with_live, factors_by_event, sports_list
 
 
 def parse_fonbet_odds(factors_list):
@@ -474,74 +464,83 @@ async def main():
         print("❌ Не удалось загрузить данные Fonbet.")
         return
     
+    # debug: ключи ответа
+    if line_data:
+        print(f"   🔍 line_data keys: {list(line_data.keys())}")
+        for k in ("sports", "competitions", "tournaments", "regions"):
+            if k in line_data:
+                v = line_data.get(k)
+                print(f"   🔍 line_data['{k}']: {type(v).__name__}, len={len(v) if hasattr(v, '__len__') else '?'}")
+                if isinstance(v, list) and v:
+                    print(f"      sample[0]: {v[0]}")
+    
     # Собираем все
     all_events_live = []
     all_factors = {}
-    all_comps = {}
-    event_to_comp = {}
+    all_sports = []
     
     for data, is_live in [(line_data, False), (live_data, True)]:
         if not data: continue
-        evs, fb_e, comps, e2c = collect_fonbet_data(data, is_live)
+        evs, fb_e, sps = collect_fonbet_data(data, is_live)
         all_events_live.extend(evs)
-        all_comps.update(comps)
-        event_to_comp.update(e2c)
+        all_sports.extend(sps)
         for eid, flist in fb_e.items():
             all_factors.setdefault(eid, []).extend(flist)
     
     print(f"⚽ Всего событий: {len(all_events_live)}")
     print(f"📊 Факторов по {len(all_factors)} событиям")
-    print(f"🏆 Competitions: {len(all_comps)}, связей event→comp: {len(event_to_comp)}")
+    print(f"🏟 Sports записей: {len(all_sports)}")
     
-    # Debug: sportId distribution
-    sport_counts = {}
-    for ev, _ in all_events_live:
-        sid = ev.get("sportId")
-        sport_counts[sid] = sport_counts.get(sid, 0) + 1
-    top_sports = sorted(sport_counts.items(), key=lambda x: -x[1])[:10]
-    print(f"   🔍 sportId distribution (top10): {top_sports}")
+    # Строим карту sport_id → name (для footbal rootKind=1)
+    sport_name_by_id = {}
+    for sp in all_sports:
+        sid = sp.get("id")
+        name = sp.get("name", "")
+        if sid is not None and name:
+            sport_name_by_id[sid] = name
     
-    # Debug: первые 3 события с team1/team2/kind/rootKind/sportId
-    print(f"   🔍 Первые 3 события:")
-    for ev, is_live in all_events_live[:3]:
-        eid = ev.get("id")
-        print(f"      id={eid} | sportId={ev.get('sportId')} | kind={ev.get('kind')} | rootKind={ev.get('rootKind')} | {ev.get('team1')} vs {ev.get('team2')} | live={is_live} | comp={event_to_comp.get(eid)}")
+    # Debug: сколько матчей с rootKind=1, kind=1, есть команды
+    football_events = [
+        ev for ev, _ in all_events_live
+        if ev.get("rootKind") == 1 and ev.get("kind") == 1
+           and ev.get("team1") and ev.get("team2")
+    ]
+    print(f"   🔍 Футбольных матчей (rootKind=1, kind=1, есть команды): {len(football_events)}")
+    if football_events:
+        print(f"   🔍 Первые 3 футбольных:")
+        for ev in football_events[:3]:
+            print(f"      id={ev.get('id')} | {ev.get('team1')} vs {ev.get('team2')} | startTime={ev.get('startTime')}")
     
-    # Фильтр: только футбол + blacklist + team1/team2
+    # Фильтруем
     valid_events = []
-    skipped_sport = 0
     skipped_blacklist = 0
-    skipped_no_league = 0
-    skipped_no_teams = 0
     
     for ev, is_live in all_events_live:
-        if ev.get("sportId") != 1:
-            skipped_sport += 1
-            continue
+        # Футбол + матч (не группа) + есть команды
+        if ev.get("rootKind") != 1: continue
+        if ev.get("kind") != 1: continue
         t1 = ev.get("team1", "")
         t2 = ev.get("team2", "")
-        if not t1 or not t2:
-            skipped_no_teams += 1
-            continue
-        league = event_to_comp.get(ev.get("id"), "")
-        if not league:
-            # Если лига неизвестна, пробуем достать из kind/rootKind
-            league = all_comps.get(ev.get("kind")) or all_comps.get(ev.get("rootKind")) or ""
+        if not t1 or not t2: continue
         
-        # Blacklist — всегда
-        text = f"{t1} {t2} {league}".lower()
+        # Blacklist
+        text = f"{t1} {t2}".lower()
         if any(word in text for word in BLACKLIST_WORDS):
             skipped_blacklist += 1
             continue
         
-        # Whitelist — только если лига известна
-        if league and not any(allowed in league.lower() for allowed in ALLOWED_LEAGUES):
-            skipped_no_league += 1
-            continue
+        # Лига: пробуем из event (если есть) или через sport_name_by_id по kind
+        league = ev.get("competition", "") or ev.get("tournament", "")
+        if not league:
+            # Пробуем по sportId → name (если это лига)
+            sid = ev.get("sportId")
+            league = sport_name_by_id.get(sid, "")
+        if not league:
+            league = "Футбол"
         
-        valid_events.append((ev, is_live, league or "Футбол"))
+        valid_events.append((ev, is_live, league))
     
-    print(f"🔎 Фильтр: sport≠1: {skipped_sport} | нет лиги: {skipped_no_league} | blacklist: {skipped_blacklist} | нет команд: {skipped_no_teams}")
+    print(f"🔎 Blacklist отсёк: {skipped_blacklist}")
     print(f"🎯 Валидных матчей: {len(valid_events)}")
     
     # Перевод
@@ -571,6 +570,7 @@ async def main():
     # matches_dict
     matches_dict = {}
     with_full = 0
+    live_count = 0
     
     for ev, is_live, league in valid_events:
         ev_id = ev.get("id")
@@ -595,6 +595,7 @@ async def main():
                 elif o["name"] == "П2": p2 = o["odds"]
         
         if markets_data: with_full += 1
+        if is_live: live_count += 1
         
         status_str = "LIVE" if is_live else "Скоро"
         start_ts = ev.get("startTime")
@@ -621,6 +622,7 @@ async def main():
         }
     
     print(f"✅ С полной росписью (Fonbet): {with_full}/{len(matches_dict)}")
+    print(f"🔴 LIVE-матчей: {live_count}")
     
     if matches_dict:
         await firebase_put("matches", matches_dict)
