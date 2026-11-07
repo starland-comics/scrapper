@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 import base64
+from collections import Counter
 from curl_cffi import requests as cffi_requests
 from rapidfuzz import fuzz
 
@@ -332,7 +333,8 @@ async def resolve_logo(team_ru, comp_name, cache, name_en_map, force_refresh=Fal
     cache[key] = fb; LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team_ru); return fb
 
 async def search_all_logos(teams_with_league, cache, name_en_map):
-    sem = asyncio.Semaphore(10)
+    # Увеличили семафор до 25 для скорости
+    sem = asyncio.Semaphore(25)
     async def one(team, league, force):
         async with sem:
             try: await resolve_logo(team, league, cache, name_en_map, force_refresh=force)
@@ -374,16 +376,14 @@ def fetch_fonbet_data(url):
 
 
 def collect_fonbet_data(data, is_live):
-    """Собирает events, factors, sport-tree."""
     if not data:
-        return [], {}, {}
+        return [], {}, []
     
     events = data.get("events", [])
     factors_raw = data.get("factors", [])
     custom_factors_raw = data.get("customFactors", [])
     sports_list = data.get("sports", [])
     
-    # Группируем факторы по eventId
     factors_by_event = {}
     for f in factors_raw:
         eid = f.get("e")
@@ -402,17 +402,13 @@ def parse_fonbet_odds(factors_list):
     markets = {}
     for factor in factors_list:
         fid = factor.get("f")
-        if fid not in FONBET_FACTORS:
-            continue
-        
+        if fid not in FONBET_FACTORS: continue
         group_name, base_name, has_param = FONBET_FACTORS[fid]
         odds = factor.get("v")
-        
         if odds is None: continue
         try: odds = float(odds)
         except: continue
         if odds <= 1.0: continue
-        
         name = base_name
         if has_param:
             p = factor.get("p")
@@ -420,14 +416,10 @@ def parse_fonbet_odds(factors_list):
             try:
                 p_float = float(p)
                 p_str = str(int(p_float)) if p_float.is_integer() else f"{p_float:g}"
-            except:
-                p_str = str(p)
+            except: p_str = str(p)
             name = f"{base_name} {p_str}"
-        
-        if group_name not in markets:
-            markets[group_name] = []
+        if group_name not in markets: markets[group_name] = []
         markets[group_name].append({"name": name, "odds": odds})
-    
     return markets
 
 
@@ -450,6 +442,7 @@ async def firebase_put(path, data):
 # ============ MAIN ============
 
 async def main():
+    t0 = time.time()
     print("🔄 [Scraper] Запуск (Fonbet)...")
     
     raw_cache = await firebase_get("team_logos") or {}
@@ -464,17 +457,6 @@ async def main():
         print("❌ Не удалось загрузить данные Fonbet.")
         return
     
-    # debug: ключи ответа
-    if line_data:
-        print(f"   🔍 line_data keys: {list(line_data.keys())}")
-        for k in ("sports", "competitions", "tournaments", "regions"):
-            if k in line_data:
-                v = line_data.get(k)
-                print(f"   🔍 line_data['{k}']: {type(v).__name__}, len={len(v) if hasattr(v, '__len__') else '?'}")
-                if isinstance(v, list) and v:
-                    print(f"      sample[0]: {v[0]}")
-    
-    # Собираем все
     all_events_live = []
     all_factors = {}
     all_sports = []
@@ -488,62 +470,93 @@ async def main():
             all_factors.setdefault(eid, []).extend(flist)
     
     print(f"⚽ Всего событий: {len(all_events_live)}")
-    print(f"📊 Факторов по {len(all_factors)} событиям")
     print(f"🏟 Sports записей: {len(all_sports)}")
     
-    # Строим карту sport_id → name (для footbal rootKind=1)
-    sport_name_by_id = {}
+    # === ДИАГНОСТИКА sports[] ===
+    kind_counter = Counter(sp.get('kind') for sp in all_sports)
+    print(f"   🔍 sports[] kinds: {dict(kind_counter)}")
+    
+    # Строим карту id → name для всех не-sport записей (турниры/компетиции)
+    tournament_by_id = {}
     for sp in all_sports:
-        sid = sp.get("id")
-        name = sp.get("name", "")
-        if sid is not None and name:
-            sport_name_by_id[sid] = name
+        sp_kind = sp.get('kind')
+        sp_id = sp.get('id')
+        sp_name = sp.get('name', '')
+        if sp_kind == 'sport' or not sp_id or not sp_name:
+            continue
+        tournament_by_id[sp_id] = sp_name
     
-    # Debug: сколько матчей с rootKind=1, kind=1, есть команды
-    football_events = [
-        ev for ev, _ in all_events_live
-        if ev.get("rootKind") == 1 and ev.get("kind") == 1
-           and ev.get("team1") and ev.get("team2")
-    ]
-    print(f"   🔍 Футбольных матчей (rootKind=1, kind=1, есть команды): {len(football_events)}")
-    if football_events:
-        print(f"   🔍 Первые 3 футбольных:")
-        for ev in football_events[:3]:
-            print(f"      id={ev.get('id')} | {ev.get('team1')} vs {ev.get('team2')} | startTime={ev.get('startTime')}")
+    print(f"   🔍 Турниров/компетиций в карте: {len(tournament_by_id)}")
     
-    # Фильтруем
+    # Debug: примеры карты
+    sample_items = list(tournament_by_id.items())[:5]
+    for sid, sname in sample_items:
+        print(f"      id={sid}: {sname}")
+    
+    # Проверим Краснодар-ЦСКА
+    krasnodar = next((ev for ev, _ in all_events_live if 'Краснодар' in str(ev.get('team1', ''))), None)
+    if krasnodar:
+        print(f"   🔍 Краснодар-ЦСКА: sportId={krasnodar.get('sportId')}, kind={krasnodar.get('kind')}, rootKind={krasnodar.get('rootKind')}")
+        print(f"      → tournament name: {tournament_by_id.get(krasnodar.get('sportId'), 'НЕ НАЙДЕН')}")
+    
+    # === ФИЛЬТРАЦИЯ ===
     valid_events = []
+    skipped_sport = 0
     skipped_blacklist = 0
+    skipped_whitelist = 0
+    skipped_no_teams = 0
     
     for ev, is_live in all_events_live:
-        # Футбол + матч (не группа) + есть команды
-        if ev.get("rootKind") != 1: continue
-        if ev.get("kind") != 1: continue
+        if ev.get("rootKind") != 1 or ev.get("kind") != 1:
+            skipped_sport += 1
+            continue
         t1 = ev.get("team1", "")
         t2 = ev.get("team2", "")
-        if not t1 or not t2: continue
+        if not t1 or not t2:
+            skipped_no_teams += 1
+            continue
+        
+        # Определяем лигу
+        sid = ev.get("sportId")
+        league = tournament_by_id.get(sid, "")
+        if not league:
+            league = "Футбол"  # fallback
         
         # Blacklist
-        text = f"{t1} {t2}".lower()
+        text = f"{t1} {t2} {league}".lower()
         if any(word in text for word in BLACKLIST_WORDS):
             skipped_blacklist += 1
             continue
         
-        # Лига: пробуем из event (если есть) или через sport_name_by_id по kind
-        league = ev.get("competition", "") or ev.get("tournament", "")
-        if not league:
-            # Пробуем по sportId → name (если это лига)
-            sid = ev.get("sportId")
-            league = sport_name_by_id.get(sid, "")
-        if not league:
-            league = "Футбол"
+        # WHITELIST — только если лига известна
+        if league != "Футбол" and not any(allowed in league.lower() for allowed in ALLOWED_LEAGUES):
+            skipped_whitelist += 1
+            continue
+        
+        # Если лига = "Футбол" (не нашли в карте) — пропускаем, это мусор
+        if league == "Футбол":
+            skipped_whitelist += 1
+            continue
         
         valid_events.append((ev, is_live, league))
     
-    print(f"🔎 Blacklist отсёк: {skipped_blacklist}")
+    print(f"🔎 Отсев: sport≠футбол: {skipped_sport} | нет команд: {skipped_no_teams} | blacklist: {skipped_blacklist} | whitelist: {skipped_whitelist}")
     print(f"🎯 Валидных матчей: {len(valid_events)}")
     
-    # Перевод
+    if not valid_events:
+        print("⚠️ Нет валидных матчей. Проверь ALLOWED_LEAGUES и tournament map.")
+        # Debug: показать 10 первых турниров, которые не прошли whitelist
+        rejected_leagues = Counter()
+        for ev, _ in all_events_live:
+            if ev.get("rootKind") != 1 or ev.get("kind") != 1: continue
+            sid = ev.get("sportId")
+            lg = tournament_by_id.get(sid, "")
+            if lg and not any(a in lg.lower() for a in ALLOWED_LEAGUES):
+                rejected_leagues[lg] += 1
+        print(f"   🔍 Топ-15 отсечённых лиг: {rejected_leagues.most_common(15)}")
+        return
+    
+    # === ПЕРЕВОД + ЛОГОТИПЫ ===
     teams_ru = set()
     for ev, _, _ in valid_events:
         if ev.get("team1"): teams_ru.add(ev.get("team1"))
@@ -551,23 +564,27 @@ async def main():
     print(f"🔤 Перевожу {len(teams_ru)} названий команд...")
     name_en_map = batch_translate_ru_to_en(list(teams_ru))
     
-    # Логотипы
+    # Логотипы — только для тех, кого нет в кэше
     missing = set()
     for ev, _, league in valid_events:
         for t in (ev.get("team1"), ev.get("team2")):
             if not t: continue
             hint = league_to_country(league) or ""
             ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            force = (t in FOTMOB_ID_OVERRIDES) or (t in DIRECT_LOGO_URLS) or (not ex) or _is_fallback(ex)
-            if force: missing.add((t, league, force))
+            # Если лого уже есть и НЕ fallback — пропускаем
+            if ex and not _is_fallback(ex):
+                continue
+            # Если команда в override — пропускаем (быстро возьмётся)
+            if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS:
+                continue
+            missing.add((t, league, True))
     
+    print(f"🔎 Поиск логотипов для {len(missing)} пар (остальные в кэше)...")
     if missing:
-        print(f"🔎 Поиск логотипов для {len(missing)} пар...")
         await search_all_logos(list(missing), logo_cache, name_en_map)
         await firebase_put("team_logos", _cache_to_fb(logo_cache))
-        if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ: {list(set(FALLBACK_TEAMS))}")
     
-    # matches_dict
+    # === СБОРКА ===
     matches_dict = {}
     with_full = 0
     live_count = 0
@@ -575,11 +592,9 @@ async def main():
     for ev, is_live, league in valid_events:
         ev_id = ev.get("id")
         if not ev_id: continue
-        
         mid = f"fonbet_{ev_id}"
         t1 = ev.get("team1", "")
         t2 = ev.get("team2", "")
-        
         hint = league_to_country(league) or ""
         hl = find_logo(logo_cache, t1, hint)
         al = find_logo(logo_cache, t2, hint)
@@ -607,10 +622,10 @@ async def main():
         score = "VS"
         if is_live:
             sd = ev.get("score", {}) or {}
-            s1 = sd.get("team1") if isinstance(sd, dict) else None
-            s2 = sd.get("team2") if isinstance(sd, dict) else None
-            if s1 is not None and s2 is not None:
-                score = f"{s1} : {s2}"
+            if isinstance(sd, dict):
+                s1 = sd.get("team1"); s2 = sd.get("team2")
+                if s1 is not None and s2 is not None:
+                    score = f"{s1} : {s2}"
         
         matches_dict[mid] = {
             "title": f"{t1} - {t2}", "home": t1, "away": t2,
@@ -621,8 +636,9 @@ async def main():
             "markets": markets_data
         }
     
-    print(f"✅ С полной росписью (Fonbet): {with_full}/{len(matches_dict)}")
-    print(f"🔴 LIVE-матчей: {live_count}")
+    print(f"✅ С полной росписью: {with_full}/{len(matches_dict)}")
+    print(f"🔴 LIVE: {live_count}")
+    print(f"⏱ Время: {time.time()-t0:.1f}s")
     
     if matches_dict:
         await firebase_put("matches", matches_dict)
