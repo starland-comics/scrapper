@@ -36,47 +36,52 @@ FONBET_FACTORS = {
     924: ("Двойной шанс", "1Х", False), 925: ("Двойной шанс", "12", False), 926: ("Двойной шанс", "Х2", False),
     928: ("Обе забьют", "Да", False), 929: ("Обе забьют", "Нет", False),
     17: ("Тотал", "ТБ", True), 18: ("Тотал", "ТМ", True),
-    930: ("Тотал", "ТБ", True), 931: ("Тотал", "ТМ", True),
-    910: ("Тотал", "ТБ", True), 911: ("Тотал", "ТМ", True),
-    932: ("Фора", "Ф1", True), 933: ("Фора", "Ф2", True),
-    12: ("Фора", "Ф1", True), 13: ("Фора", "Ф2", True),
+    11: ("Фора", "Ф1", True), 12: ("Фора", "Ф2", True),
+    21: ("ИТБ1", "ТБ", True), 22: ("ИТМ1", "ТМ", True),
+    23: ("ИТБ2", "ТБ", True), 24: ("ИТМ2", "ТМ", True),
+    981: ("1-й тайм", "П1", False), 982: ("1-й тайм", "Х", False), 983: ("1-й тайм", "П2", False),
+    174: ("1-й тайм Тотал", "ТБ", True), 175: ("1-й тайм Тотал", "ТМ", True),
+    180: ("1-й тайм Фора", "Ф1", True), 181: ("1-й тайм Фора", "Ф2", True),
+    984: ("1-й тайм ОЗ", "Да", False), 985: ("1-й тайм ОЗ", "Нет", False),
 }
 
 ALLOWED_LEAGUE_PATTERNS = [
-    r'^россия\.\s*премьер', r'^россия\.\s*рпл', r'^россия\.\s*фнл', r'^россия\.\s*первая лига', r'^россия\.\s*кубок',
-    r'^англия\.\s*премьер', r'^англия\.\s*чемпионшип($|\s*\.|\s*сезон)',
-    r'^англия\.\s*кубок англии', r'^англия\.\s*fa cup', r'^англия\.\s*кубок лиги', r'^англия\.\s*efl cup', r'^англия\.\s*carabao',
-    r'^испания\.\s*ла лига', r'^испания\.\s*примера($|\s*дивизион)', r'^испания\.\s*сегунда($|\s*дивизион|\s*лига)', r'^испания\.\s*кубок', r'^испания\.\s*copa',
-    r'^италия\.\s*серия а($|\s*\.|\s*сезон)', r'^италия\.\s*серия b($|\s*\.|\s*сезон)', r'^италия\.\s*серия б($|\s*\.|\s*сезон)', r'^италия\.\s*кубок',
-    r'^германия\.\s*бундеслига($|\s*\.|\s*сезон)', r'^германия\.\s*2\.\s*бундеслига', r'^германия\.\s*вторая бундеслига', r'^германия\.\s*кубок',
-    r'^франция\.\s*лига 1($|\s*\.|\s*сезон)', r'^франция\.\s*лига 2($|\s*\.|\s*сезон)', r'^франция\.\s*кубок',
-    r'^португалия\.\s*примейра', r'^португалия\.\s*primeira', r'^португалия\.\s*лига португал', r'^португалия\.\s*кубок', r'^португалия\.\s*taça',
-    r'^нидерланды\.\s*эредивизи', r'^нидерланды\.\s*eredivisie', r'^нидерланды\.\s*кубок', r'^нидерланды\.\s*knvb',
-    r'^бразилия\.\s*серия a($|\s*\.|\s*сезон)', r'^бразилия\.\s*серия а($|\s*\.|\s*сезон)', r'^бразилия\.\s*кубок', r'^бразилия\.\s*copa do brasil',
-    r'^украина\.\s*премьер', r'^украина\.\s*упл', r'^украина\.\s*кубок',
-    r'^казахстан\.\s*премьер', r'^казахстан\.\s*кубок',
-    r'^саудовская аравия\.\s*про', r'^саудовская аравия\.\s*премьер', r'^саудовская аравия\.\s*кубок',
-    r'^турция\.\s*суперлига', r'^турция\.\s*süper', r'^турция\.\s*кубок',
-    r'^сша\.\s*mls', r'^сша\.\s*major league soccer',
+    r'^россия\.\s*(премьер|рпл|фнл|первая лига|кубок)',
+    r'^англия\.\s*(премьер|чемпионшип|кубок англии|fa cup|кубок лиги|efl cup|carabao)($|\s*\.|\s*сезон)',
+    r'^испания\.\s*(ла лига|примера|сегунда|кубок|copa)($|\s*дивизион|\s*лига|\s*\.)',
+    r'^италия\.\s*(серия а|серия b|серия б|кубок)($|\s*\.|\s*сезон)',
+    r'^германия\.\s*(бундеслига|2\.\s*бундеслига|вторая бундеслига|кубок)($|\s*\.|\s*сезон)',
+    r'^франция\.\s*(лига 1|лига 2|кубок)($|\s*\.|\s*сезон)',
+    r'^португалия\.\s*(примейра|primeira|лига португал|кубок|taça)',
+    r'^нидерланды\.\s*(эредивизи|eredivisie|кубок|knvb)',
+    r'^бразилия\.\s*(серия a|серия а|кубок бразилии|copa do brasil)($|\s*\.|\s*сезон)',
+    r'^украина\.\s*(премьер|упл|кубок)',
+    r'^казахстан\.\s*(премьер|кубок)',
+    r'^саудовская аравия\.\s*(про|премьер|кубок)',
+    r'^турция\.\s*(суперлига|süper|кубок)',
+    r'^сша\.\s*(mls|major league soccer)',
     r'^лига чемпионов(\s+уефа)?(\.|\s+(общий|группов|плей|финал|квалиф)|$)',
     r'^лига европы(\s+уефа)?(\.|\s+(общий|группов|плей|финал|квалиф)|$)',
-    r'^лига конференций(\s+уефа)?', r'^чемпионат европы', r'^чемпионат мира', r'^лига наций', r'^отборочный', r'^сборная', r'^суперкубок уефа', r'^товарищеск',
+    r'^лига конференций(\s+уефа)?', r'^чемпионат европы', r'^чемпионат мира',
+    r'^лига наций', r'^отборочный', r'^сборная', r'^суперкубок уефа', r'^товарищеск',
 ]
 
 FORBIDDEN_LEAGUE_WORDS = [
-    "теннис", "tennis", "баскетбол", "basketball", "хоккей", "hockey", "волейбол", "volleyball",
-    "регби", "rugby", "крикет", "cricket", "американский футбол", "american football", "бейсбол", "baseball",
-    "гандбол", "handball", "флорбол", "floorball", "пляжный",
-    "кибер", "esports", "e-sports", "csgo", "cs:go", "dota", "virtua", "виртуальн", "virtual",
-    "лига про", "h2h", "fc 27", "fc27", "fc 26", "fc26", "fc 25", "fc25", "ncaa", "ncaab", "ncaaf",
-    "жен", "women", "ladies", "fem", "vrouwen", "дамы", "девуш", "юнош", "юн ", "молодеж", "молодёж", "молодежн",
-    "дубл", "reserve", "academy", "академ", "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
-    "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23", "пфл", "третий дивизион", "третья лига", "третий див",
-    "amateur", "любител", "лига трофи", "региональн", "regional", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8",
-    "b1", "b2", "b3", "b4", "c1", "c2", "c3", "rfef", "feb", "futsal", "мини-футбол", "мини футбол",
-    "кариока", "гойяно", "паулиста", "минейро", "баияно", "catarinense", "gaúcho", "gaucho",
-    "парана", "paranaense", "cearense", "pernambucano", "азии", "азия", "afc", "африки", "африка", "caf",
-    "конкакаф", "concacaf", "южной америки", "conmebol", "олимпийск", "olympic",
+    "гандбол", "handball", "теннис", "tennis", "баскетбол", "basketball",
+    "хоккей", "hockey", "волейбол", "volleyball", "регби", "rugby",
+    "крикет", "cricket", "американский футбол", "american football", "бейсбол", "baseball",
+    "флорбол", "floorball", "пляжный", "кибер", "esports", "e-sports", "csgo", "cs:go", "dota",
+    "virtua", "виртуальн", "virtual", "лига про", "h2h", "fc 27", "fc27", "fc 26", "fc26", "fc 25", "fc25",
+    "ncaa", "ncaab", "ncaaf", "жен", "women", "ladies", "fem", "vrouwen", "дамы", "девуш",
+    "юнош", "юн ", "молодеж", "молодёж", "молодежн", "дубл", "reserve", "academy", "академ",
+    "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
+    "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23", "пфл", "третий дивизион",
+    "третья лига", "третий див", "amateur", "любител", "лига трофи", "региональн", "regional",
+    "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "b1", "b2", "b3", "b4", "c1", "c2", "c3",
+    "rfef", "feb", "futsal", "мини-футбол", "мини футбол", "кариока", "гойяно", "паулиста",
+    "минейро", "баияно", "catarinense", "gaúcho", "gaucho", "парана", "paranaense", "cearense",
+    "pernambucano", "азии", "азия", "afc", "африки", "африка", "caf", "конкакаф", "concacaf",
+    "южной америки", "conmebol", "олимпийск", "olympic"
 ]
 
 BLACKLIST_WORDS = [
@@ -179,8 +184,7 @@ def is_allowed_league(league):
         if f in low: return False
     for pattern in ALLOWED_LEAGUE_PATTERNS:
         try:
-            if re.search(pattern, low):
-                return True
+            if re.search(pattern, low): return True
         except: pass
     return False
 
@@ -356,12 +360,6 @@ async def search_all_logos(teams_with_league, cache, name_en_map):
                 LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team)
     await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
-def find_logo_fast(team_logo_idx, team, cache, hint):
-    if not team: return ""
-    v = cache.get(f"{team}|{hint}")
-    if v: return v
-    return team_logo_idx.get(team, "")
-
 # ============ FONBET ============
 
 def fetch_fonbet_data(url):
@@ -374,7 +372,7 @@ def fetch_fonbet_data(url):
                     print(f"   ⚠️ Не JSON: {r.text[:200]}")
                     return None
             else:
-                print(f"   ⚠️ HTTP {r.status_code} для {url}")
+                print(f"   ⚠️ HTTP {r.status_code}")
         except Exception as e:
             print(f"   ⚠️ {e}")
             time.sleep(1)
@@ -388,138 +386,11 @@ def _parse_start_ts(ev):
     except: return 0
 
 
-def _is_match_live(ev, now_ts):
-    start_ts = _parse_start_ts(ev)
-    if start_ts <= 0: return False
-    elapsed = now_ts - start_ts
-    if elapsed < 0: return False
-    if elapsed >= int(3.5 * 3600): return False
-    return True
-
-
-def _extract_score_from_live_info(li):
-    """Извлекает (s1, s2, timer_str) из одного liveEventInfo."""
-    if not li: return None, None, None
-    timer_str = li.get("timer")  # "45:00"
-    # scores: [[{c1,c2}], [{c1,c2,title}...]]
-    scores = li.get("scores")
-    s1 = s2 = None
-    if isinstance(scores, list):
-        for block in scores:
-            if isinstance(block, list) and block:
-                first = block[0]
-                if isinstance(first, dict):
-                    c1 = first.get("c1"); c2 = first.get("c2")
-                    if c1 is not None and c2 is not None:
-                        try:
-                            s1 = int(c1); s2 = int(c2)
-                            break
-                        except: pass
-    if s1 is None:
-        s1 = _first_not_none(li, ["c1", "s1", "team1Score", "homeScore"])
-        s2 = _first_not_none(li, ["c2", "s2", "team2Score", "awayScore"])
-        if s1 is not None and s2 is not None:
-            try: s1 = int(s1); s2 = int(s2)
-            except: s1 = s2 = None
-    # Минута из timer "45:00" → 45
-    minute = None
-    if timer_str and isinstance(timer_str, str) and ":" in timer_str:
-        try: minute = int(timer_str.split(":")[0])
-        except: pass
-    return s1, s2, minute
-
-
-def format_total_param(p):
-    if p is None: return None
-    try: p_val = float(p)
-    except: return str(p)
-    if p_val != int(p_val): return f"{p_val:g}"
-    p_int = int(p_val)
-    if p_int >= 100: return f"{p_int / 100:g}"
-    elif p_int >= 10: return f"{p_int / 10:g}"
-    return str(p_int)
-
-
 def collect_fonbet_data(data):
-    if not data: return [], {}, [], {}, []
+    if not data: return [], {}, []
     events = data.get("events", [])
-    factors_raw = data.get("factors", [])
-    custom_factors_raw = data.get("customFactors", [])
     sports_list = data.get("sports", [])
-    live_infos = data.get("liveEventInfos", [])
-    event_miscs = data.get("eventMiscs", [])
-    
-    factors_by_event = {}
-    for f in factors_raw:
-        eid = f.get("e")
-        if eid: factors_by_event.setdefault(eid, []).append(f)
-    for cf in custom_factors_raw:
-        eid = cf.get("e")
-        if eid: factors_by_event.setdefault(eid, []).extend(cf.get("factors", []))
-    
-    live_by_event_id = {}
-    for li in live_infos:
-        eid = li.get("eventId")  # ⚠️ было id — исправлено
-        if eid: live_by_event_id[eid] = li
-    
-    misc_by_id = {}
-    for em in event_miscs:
-        eid = em.get("id")
-        if eid: misc_by_id[eid] = em
-    
-    return events, factors_by_event, sports_list, live_by_event_id, misc_by_id
-
-
-def parse_fonbet_odds(factors_list):
-    """Парсит рынки + дедуплицирует по (group_name, name)."""
-    seen_market_names = set()  # (group_name, name)
-    markets = {}
-    for factor in factors_list:
-        fid = factor.get("f")
-        if fid not in FONBET_FACTORS: continue
-        group_name, base_name, has_param = FONBET_FACTORS[fid]
-        odds = factor.get("v")
-        if odds is None: continue
-        try: odds = float(odds)
-        except: continue
-        if odds <= 1.0: continue
-        name = base_name
-        if has_param:
-            p_str = format_total_param(factor.get("p"))
-            if p_str is None: continue
-            name = f"{base_name} {p_str}"
-        dedup_key = (group_name, name)
-        if dedup_key in seen_market_names: continue
-        seen_market_names.add(dedup_key)
-        if group_name not in markets: markets[group_name] = []
-        markets[group_name].append({"name": name, "odds": odds})
-    return markets
-
-
-def filter_decided_markets(markets, s1, s2):
-    if s1 is None or s2 is None: return markets
-    filtered = {}
-    total = s1 + s2
-    for group_name, outcomes in markets.items():
-        if group_name == "Обе забьют":
-            if s1 > 0 and s2 > 0: continue
-            filtered[group_name] = outcomes
-        elif group_name == "Тотал":
-            new_outs = []
-            for o in outcomes:
-                name = o["name"]
-                limit_str = None
-                if name.startswith("ТБ "): limit_str = name[3:]
-                elif name.startswith("ТМ "): limit_str = name[3:]
-                if limit_str:
-                    try: limit = float(limit_str)
-                    except: new_outs.append(o); continue
-                    if total > limit: continue
-                new_outs.append(o)
-            if new_outs: filtered[group_name] = new_outs
-        else:
-            filtered[group_name] = outcomes
-    return filtered
+    return events, sports_list
 
 
 # ============ FIREBASE ============
@@ -542,7 +413,7 @@ async def firebase_put(path, data):
 
 async def main():
     t0 = time.time()
-    print("🔄 [Scraper] Запуск (Fonbet)...")
+    print("🔄 [Scraper] Запуск (Fonbet — только логотипы)...")
     
     now_ts = int(time.time())
     seven_days = 7 * 86400
@@ -561,222 +432,95 @@ async def main():
         return
     
     events_by_id = {}
-    all_factors = {}
     all_sports = []
-    all_live = {}
-    all_miscs = {}
     
     for data in [line_data, live_data]:
         if not data: continue
-        events, fb_e, sps, live_by_id, misc_by_id = collect_fonbet_data(data)
+        events, sps = collect_fonbet_data(data)
         all_sports.extend(sps)
-        all_live.update(live_by_id)
-        all_miscs.update(misc_by_id)
         for ev in events:
             eid = ev.get("id")
-            if not eid: continue
-            if eid not in events_by_id:
+            if eid and eid not in events_by_id:
                 events_by_id[eid] = dict(ev)
-        for eid, flist in fb_e.items():
-            all_factors.setdefault(eid, []).extend(flist)
     
     all_events = list(events_by_id.values())
-    print(f"⚽ Всего событий (после дедупликации): {len(all_events)}")
-    print(f"📺 Live инфо: {len(all_live)}")
+    print(f"⚽ Всего событий: {len(all_events)}")
     
-    # Карта sportId → (sport_name, is_football)
     sport_name_by_id = {}
-    sport_kind_by_id = {}
     for sp in all_sports:
-        sp_id = sp.get('id'); sp_name = sp.get('name', ''); sp_kind = sp.get('kind')
-        if sp_id and sp_name:
-            sport_name_by_id[sp_id] = sp_name
-            sport_kind_by_id[sp_id] = sp_kind
+        sid = sp.get('id'); nm = sp.get('name', '')
+        if sid and nm: sport_name_by_id[sid] = nm
     
-    # Отдельно карта tournamentId → name (для лиг)
     tournament_by_id = {}
     for sp in all_sports:
         if sp.get('kind') == 'sport': continue
-        sp_id = sp.get('id'); sp_name = sp.get('name', '')
-        if sp_id and sp_name:
-            tournament_by_id[sp_id] = sp_name
+        sid = sp.get('id'); nm = sp.get('name', '')
+        if sid and nm: tournament_by_id[sid] = nm
     
-    # === ФИЛЬТРАЦИЯ ===
-    valid_events = []
-    skipped_sport = 0
-    skipped_not_football = 0
-    skipped_blacklist = 0
-    skipped_whitelist = 0
-    skipped_no_teams = 0
-    skipped_time = 0
-    rejected_leagues = Counter()
-    live_count = 0
-    prematch_count = 0
+    # Собираем команды из матчей, которые прошли фильтр лиг
+    teams_to_check = set()  # (team, league)
+    valid_matches = 0
     
     for ev in all_events:
-        if ev.get("rootKind") != 1 or ev.get("kind") != 1:
-            skipped_sport += 1
-            continue
-        t1 = ev.get("team1", "")
-        t2 = ev.get("team2", "")
-        if not t1 or not t2:
-            skipped_no_teams += 1
-            continue
+        if ev.get("rootKind") != 1 or ev.get("kind") != 1: continue
+        t1 = ev.get("team1", ""); t2 = ev.get("team2", "")
+        if not t1 or not t2: continue
         
-        start_ts = _parse_start_ts(ev)
-        if start_ts <= 0:
-            skipped_time += 1
-            continue
+        st = _parse_start_ts(ev)
+        if st <= 0: continue
+        
+        # Только в окне [now-3.5h, now+7d]
+        if st < now_ts - int(3.5 * 3600): continue
+        if st > now_ts + seven_days: continue
         
         sid = ev.get("sportId")
-        # ⚠️ ФИЛЬТР ТОЛЬКО ФУТБОЛ: sportId должен ссылаться на sport с name='Футбол'
         sport_name = sport_name_by_id.get(sid, "")
-        sport_kind = sport_kind_by_id.get(sid, "")
-        if sport_kind == 'sport' and sport_name.lower() != 'футбол':
-            skipped_not_football += 1
+        if sport_name and any(w in sport_name.lower() for w in ["гандбол", "баскетбол", "хоккей", "теннис", "handball"]):
             continue
-        
-        # Если sid ведёт на турнир, проверяем через родительский спорт? 
-        # В Fonbet sportId обычно ссылается на турнир (kind='segment'), а kind/rootKind=1 говорит что футбол.
-        # Поэтому фильтр по sportId == 1 (прямой футбол) или по спорту из sports с kind='sport' и name='Футбол'.
-        # Дополнительно: если sport_name содержит баскетбол/хоккей — отсекаем.
-        if sport_name and any(w in sport_name.lower() for w in ["баскетбол", "basketball", "хоккей", "hockey", "теннис", "tennis"]):
-            skipped_not_football += 1
-            continue
-        
-        eid = ev.get("id")
-        s1, s2, timer = _extract_score_from_live_info(all_live.get(eid))
-        is_live = s1 is not None and s2 is not None and _is_match_live(ev, now_ts)
-        if not is_live:
-            is_live = _is_match_live(ev, now_ts) and timer is not None
-        
-        if not is_live:
-            if start_ts < now_ts - int(3.5 * 3600):
-                skipped_time += 1
-                continue
-            if start_ts > now_ts + seven_days:
-                skipped_time += 1
-                continue
         
         league = tournament_by_id.get(sid, "")
-        
         text = f"{t1} {t2}".lower()
-        if any(word in text for word in BLACKLIST_WORDS):
-            skipped_blacklist += 1
-            continue
+        if any(word in text for word in BLACKLIST_WORDS): continue
+        if not is_allowed_league(league): continue
         
-        if not is_allowed_league(league):
-            skipped_whitelist += 1
-            if league: rejected_leagues[league] += 1
-            continue
-        
-        valid_events.append((ev, is_live, league, start_ts, s1, s2, timer))
-        if is_live: live_count += 1
-        else: prematch_count += 1
+        teams_to_check.add((t1, league))
+        teams_to_check.add((t2, league))
+        valid_matches += 1
     
-    print(f"🔎 Отсев: sport/kind: {skipped_sport} | не футбол: {skipped_not_football} | нет команд: {skipped_no_teams} | время: {skipped_time} | blacklist: {skipped_blacklist} | whitelist: {skipped_whitelist}")
-    print(f"🎯 Валидных матчей: {len(valid_events)} (LIVE: {live_count} | Прематч: {prematch_count})")
+    print(f"🎯 Матчей в окне: {valid_matches}")
+    print(f"🏟 Уникальных (команда, лига): {len(teams_to_check)}")
     
-    if rejected_leagues:
-        print(f"   🔍 Топ-15 отсечённых лиг:")
-        for lg, cnt in rejected_leagues.most_common(15):
-            print(f"      {cnt:4d}  {lg}")
+    # Какие команды нуждаются в логотипах (нет в кэше или fallback)
+    teams_to_search = set()
+    for t, league in teams_to_check:
+        if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
+        existing = team_logo_idx.get(t)
+        if existing and not _is_fallback(existing): continue
+        if existing and _is_fallback(existing): continue  # не ищем повторно
+        teams_to_search.add((t, league))
     
-    valid_leagues = Counter(lg for _, _, lg, _, _, _, _ in valid_events)
-    print(f"   ✅ Топ-10 разрешённых лиг:")
-    for lg, cnt in valid_leagues.most_common(10):
-        print(f"      {cnt:4d}  {lg}")
+    print(f"🔍 Новых команд для поиска логотипов: {len(teams_to_search)}")
     
-    if not valid_events:
-        print("⚠️ Нет валидных матчей.")
+    if not teams_to_search:
+        print("✅ Все логотипы уже в кэше. Ничего искать не нужно.")
+        print(f"⏱ Время: {time.time()-t0:.1f}s")
         return
     
-    # === КОМАНДЫ + ЛОГОТИПЫ (как было) ===
-    teams_ru = set()
-    for ev, _, _, _, _, _, _ in valid_events:
-        if ev.get("team1"): teams_ru.add(ev.get("team1"))
-        if ev.get("team2"): teams_ru.add(ev.get("team2"))
+    teams_list = list({t for t, _ in teams_to_search})
+    print(f"🔤 Перевожу {len(teams_list)} названий команд...")
+    name_en_map = batch_translate_ru_to_en(teams_list)
     
-    teams_to_translate = set()
-    for t in teams_ru:
-        if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
-        if team_logo_idx.get(t): continue
-        teams_to_translate.add(t)
+    print(f"🔎 Ищу логотипы для {len(teams_to_search)} пар...")
+    await search_all_logos(list(teams_to_search), logo_cache, name_en_map)
     
-    print(f"🔤 Новых команд для поиска: {len(teams_to_translate)}/{len(teams_ru)}")
-    if teams_to_translate:
-        name_en_map = batch_translate_ru_to_en(list(teams_to_translate))
-    else:
-        name_en_map = {}
+    ok = await firebase_put("team_logos", _cache_to_fb(logo_cache))
+    print(f"💾 Сохранено логотипов: {len(logo_cache)} (ok={ok})")
     
-    missing = set()
-    for ev, _, league, _, _, _, _ in valid_events:
-        for t in (ev.get("team1"), ev.get("team2")):
-            if not t: continue
-            if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
-            if team_logo_idx.get(t): continue
-            hint = league_to_country(league) or ""
-            missing.add((t, league, True))
+    if FALLBACK_TEAMS:
+        print(f"🚨 БЕЗ ЛОГОТИПОВ: {len(set(FALLBACK_TEAMS))} новых команд")
     
-    print(f"🔎 Поиск логотипов для {len(missing)} новых пар...")
-    if missing:
-        await search_all_logos(list(missing), logo_cache, name_en_map)
-        await firebase_put("team_logos", _cache_to_fb(logo_cache))
-        team_logo_idx = build_team_logo_index(logo_cache)
-        if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ: {len(set(FALLBACK_TEAMS))}")
-    
-    # === СБОРКА ===
-    matches_dict = {}
-    with_full = 0
-    
-    for ev, is_live, league, start_ts, s1, s2, timer in valid_events:
-        ev_id = ev.get("id")
-        if not ev_id: continue
-        mid = f"fonbet_{ev_id}"
-        t1 = ev.get("team1", "")
-        t2 = ev.get("team2", "")
-        hint = league_to_country(league) or ""
-        hl = find_logo_fast(team_logo_idx, t1, logo_cache, hint)
-        al = find_logo_fast(team_logo_idx, t2, logo_cache, hint)
-        
-        factors_list = all_factors.get(ev_id, [])
-        markets_data = parse_fonbet_odds(factors_list)
-        
-        if is_live and s1 is not None and s2 is not None:
-            markets_data = filter_decided_markets(markets_data, s1, s2)
-        
-        p1 = px = p2 = None
-        if "Исход" in markets_data:
-            for o in markets_data["Исход"]:
-                if o["name"] == "П1": p1 = o["odds"]
-                elif o["name"] == "Х": px = o["odds"]
-                elif o["name"] == "П2": p2 = o["odds"]
-        
-        if markets_data: with_full += 1
-        
-        score = "VS"
-        if is_live:
-            if s1 is not None and s2 is not None:
-                score = f"{s1} : {s2}"
-            status_str = f"LIVE {timer}'" if timer is not None else "LIVE"
-        else:
-            status_str = time.strftime("%d.%m %H:%M", time.localtime(start_ts))
-        
-        matches_dict[mid] = {
-            "title": f"{t1} - {t2}", "home": t1, "away": t2,
-            "homeLogo": hl, "awayLogo": al, "league": league,
-            "status": status_str, "score": score,
-            "start_time": start_ts,
-            "odds": {"1": p1, "X": px, "2": p2},
-            "markets": markets_data
-        }
-    
-    print(f"✅ С полной росписью: {with_full}/{len(matches_dict)}")
+    print(f"📊 Stats: fotmob={LOGO_STATS['fotmob']}, thesportsdb={LOGO_STATS['thesportsdb']}, direct={LOGO_STATS['direct']}, fallback={LOGO_STATS['fallback']}, cache={LOGO_STATS['cache']}")
     print(f"⏱ Время: {time.time()-t0:.1f}s")
-    
-    if matches_dict:
-        await firebase_put("matches", matches_dict)
-        print(f"🔥 Сохранено {len(matches_dict)} матчей")
 
 if __name__ == "__main__":
     asyncio.run(main())
