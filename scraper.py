@@ -46,21 +46,22 @@ FONBET_FACTORS = {
     933: ("Фора", "Ф2", True),
 }
 
-ALLOWED_COUNTRIES = [
-    "россия", "russia",
-    "англия", "england",
-    "испания", "spain",
-    "италия", "italy",
-    "германия", "germany",
-    "франция", "france",
-    "португалия", "portugal",
-    "нидерланды", "netherlands", "голландия", "holland",
-    "бразилия", "brazil",
-    "украина", "ukraine",
-    "казахстан", "kazakhstan",
-    "саудовская аравия", "saudi arabia",
-    "турция", "turkey",
-    "сша", "usa", "mls",
+# === WHITELIST ПО КОРНЯМ СЛОВ (ловит все формы: Россия/России/российский) ===
+ALLOWED_COUNTRY_HINTS = [
+    "росси", "russia",
+    "англ", "england",
+    "испан", "spain",
+    "итал", "italy",
+    "герман", "germany",
+    "франц", "france",
+    "португал", "portugal",
+    "нидерланд", "голланд", "netherlands", "holland",
+    "бразил", "brazil",
+    "украин", "ukraine",
+    "казах", "kazakhstan",
+    "саудов", "saudi",
+    "турц", "turkey",
+    "сша", "usa", "mls", "америк",
 ]
 
 ALLOWED_INTERNATIONAL = [
@@ -73,6 +74,30 @@ ALLOWED_INTERNATIONAL = [
     "лига наций", "nations league",
     "суперкубок", "super cup",
     "товарищеск",
+]
+
+# === BLACKLIST ЛИГ: виды спорта + мусор ===
+FORBIDDEN_LEAGUE_WORDS = [
+    # Не футбол
+    "теннис", "tennis", "баскетбол", "basketball",
+    "хоккей", "hockey", "волейбол", "volleyball",
+    "регби", "rugby", "крикет", "cricket",
+    "американский футбол", "american football", "бейсбол", "baseball",
+    "гандбол", "handball", "флорбол", "floorball", "пляжный",
+    # Киберспорт и виртуальные
+    "кибер", "esports", "e-sports", "csgo", "cs:go", "dota",
+    "virtua", "виртуальн", "virtual",
+    "лига про", "h2h", "fc 27", "fc27", "fc 26", "fc26", "fc 25", "fc25",
+    "ncaa", "ncaab", "ncaaf",
+    # Женские / молодёжные / резерв
+    "жен", "women", "ladies", "fem", "vrouwen", "дамы", "девуш",
+    "юнош", "юн ", "молодеж", "молодёж", "молодежн", "мол ",
+    "дубл", "reserve", "academy", "академ", "молодежн", "молодёжн",
+    "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
+    "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23", "u 15", "u 16", "u 17", "u 18", "u 19", "u 20", "u 21", "u 23",
+    # 3-й дивизион и ниже
+    "пфл", "третий дивизион", "третья лига", "третий див",
+    "amateur", "любител",
 ]
 
 BLACKLIST_WORDS = [
@@ -192,8 +217,13 @@ def _normalize(s):
 def is_allowed_league(league):
     if not league or league == "Футбол": return False
     low = league.lower()
-    for c in ALLOWED_COUNTRIES:
+    # 1. Blacklist — виды спорта и мусор
+    for f in FORBIDDEN_LEAGUE_WORDS:
+        if f in low: return False
+    # 2. Whitelist стран (по корням слов)
+    for c in ALLOWED_COUNTRY_HINTS:
         if c in low: return True
+    # 3. Whitelist международных турниров
     for t in ALLOWED_INTERNATIONAL:
         if t in low: return True
     return False
@@ -240,6 +270,19 @@ def _cache_to_fb(cache): return {_encode_key(k): v for k, v in cache.items() if 
 def _cache_from_fb(raw):
     if not raw or not isinstance(raw, dict): return {}
     return {_decode_key(k): v for k, v in raw.items()}
+
+def build_team_logo_index(cache):
+    """Из {team|country: logo} → {team: logo}. Для быстрого lookup."""
+    idx = {}
+    for k, v in cache.items():
+        if not v: continue
+        if "|" in k:
+            team = k.split("|")[0]
+        else:
+            team = k
+        if team not in idx:
+            idx[team] = v
+    return idx
 
 def batch_translate_ru_to_en(texts):
     if not texts: return {}
@@ -351,7 +394,7 @@ async def resolve_logo(team_ru, comp_name, cache, name_en_map, force_refresh=Fal
     cache[key] = fb; LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team_ru); return fb
 
 async def search_all_logos(teams_with_league, cache, name_en_map):
-    sem = asyncio.Semaphore(40)  # ускорено
+    sem = asyncio.Semaphore(40)
     async def one(team, league, force):
         async with sem:
             try: await resolve_logo(team, league, cache, name_en_map, force_refresh=force)
@@ -361,16 +404,12 @@ async def search_all_logos(teams_with_league, cache, name_en_map):
                 LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team)
     await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
 
-def find_logo(cache, team, hint):
+def find_logo_fast(team_logo_idx, team, cache, hint):
+    """Быстрый lookup по предварительно построенному индексу."""
     if not team: return ""
     v = cache.get(f"{team}|{hint}")
     if v: return v
-    v = cache.get(team)
-    if v: return v
-    for k, val in cache.items():
-        if "|" in k and k.split("|")[0] == team and val:
-            return val
-    return ""
+    return team_logo_idx.get(team, "")
 
 # ============ FONBET ============
 
@@ -406,7 +445,6 @@ def _has_live_score(ev):
 
 
 def _is_match_live(ev, now_ts):
-    """LIVE = матч начался (startTime в прошлом) и не закончился (elapsed < 3.5ч)."""
     start_ts = _parse_start_ts(ev)
     if start_ts <= 0: return False
     elapsed = now_ts - start_ts
@@ -501,7 +539,8 @@ async def main():
     
     raw_cache = await firebase_get("team_logos") or {}
     logo_cache = _cache_from_fb(raw_cache)
-    print(f"📥 В кэше логотипов: {len(logo_cache)}")
+    team_logo_idx = build_team_logo_index(logo_cache)
+    print(f"📥 В кэше логотипов: {len(logo_cache)} (уникальных команд: {len(team_logo_idx)})")
     
     print("📥 Загружаю линию Fonbet...")
     line_data = fetch_fonbet_data(FONBET_BASE + FONBET_LINE_PATH)
@@ -511,7 +550,6 @@ async def main():
         print("❌ Не удалось загрузить данные Fonbet.")
         return
     
-    # === ДЕДУПЛИКАЦИЯ по id ===
     events_by_id = {}
     all_factors = {}
     all_sports = []
@@ -524,19 +562,17 @@ async def main():
             eid = ev.get("id")
             if not eid: continue
             if eid in events_by_id:
-                # Мержим: если в новом событии есть score, а в старом нет — обновляем
                 old = events_by_id[eid]
                 if _has_live_score(ev) and not _has_live_score(old):
                     old["score"] = ev["score"]
             else:
-                events_by_id[eid] = dict(ev)  # копия
+                events_by_id[eid] = dict(ev)
         for eid, flist in fb_e.items():
             all_factors.setdefault(eid, []).extend(flist)
     
     all_events = list(events_by_id.values())
     print(f"⚽ Всего событий (после дедупликации): {len(all_events)}")
     
-    # Карта sportId → название турнира
     tournament_by_id = {}
     for sp in all_sports:
         if sp.get('kind') == 'sport': continue
@@ -572,14 +608,13 @@ async def main():
         
         is_live = _is_match_live(ev, now_ts)
         
-        # Фильтр по времени: live всегда, прематч — от сейчас до +7 дней
         if not is_live:
             if start_ts < now_ts - int(3.5 * 3600):
                 skipped_time += 1
-                continue  # давно прошёл
+                continue
             if start_ts > now_ts + seven_days:
                 skipped_time += 1
-                continue  # далеко в будущем
+                continue
         
         sid = ev.get("sportId")
         league = tournament_by_id.get(sid, "")
@@ -606,46 +641,62 @@ async def main():
         for lg, cnt in rejected_leagues.most_common(10):
             print(f"      {cnt:4d}  {lg}")
     
+    # Проверка что нет мусора — топ лиг в валидных
+    valid_leagues = Counter(lg for _, _, lg, _ in valid_events)
+    print(f"   ✅ Топ-10 разрешённых лиг:")
+    for lg, cnt in valid_leagues.most_common(10):
+        print(f"      {cnt:4d}  {lg}")
+    
     if not valid_events:
         print("⚠️ Нет валидных матчей.")
         return
     
-    # === ПЕРЕВОД (только для команд без лого) ===
+    # === ОПРЕДЕЛЕНИЕ КОМАНД ДЛЯ ПОИСКА ===
     teams_ru = set()
     for ev, _, _, _ in valid_events:
         if ev.get("team1"): teams_ru.add(ev.get("team1"))
         if ev.get("team2"): teams_ru.add(ev.get("team2"))
     
+    # Пропускаем: overrides + те, у кого уже есть лого НЕ fallback + те, у кого ранее fallback (нет смысла искать заново)
     teams_to_translate = set()
+    teams_to_search_logo = set()
+    
     for t in teams_ru:
         if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
-        found = False
-        for k, v in logo_cache.items():
-            if v and not _is_fallback(v) and (k == t or k.startswith(t + "|")):
-                found = True
-                break
-        if not found:
-            teams_to_translate.add(t)
+        existing = team_logo_idx.get(t)
+        if existing and not _is_fallback(existing):
+            # Лого уже есть — пропускаем полностью
+            continue
+        if existing and _is_fallback(existing):
+            # Fallback уже был — не ищем повторно (экономит 3-4 минуты)
+            continue
+        # Реально новый — надо перевести и искать
+        teams_to_translate.add(t)
     
-    print(f"🔤 Перевожу {len(teams_to_translate)}/{len(teams_ru)} названий (остальные в кэше)...")
-    name_en_map = batch_translate_ru_to_en(list(teams_to_translate))
+    print(f"🔤 Новых команд для поиска: {len(teams_to_translate)}/{len(teams_ru)} (остальные в кэше или уже fallback)")
     
-    # === ЛОГОТИПЫ (для всех матчей в окне) ===
+    if teams_to_translate:
+        name_en_map = batch_translate_ru_to_en(list(teams_to_translate))
+    else:
+        name_en_map = {}
+    
     missing = set()
     for ev, _, league, _ in valid_events:
         for t in (ev.get("team1"), ev.get("team2")):
             if not t: continue
             if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
+            existing = team_logo_idx.get(t)
+            if existing: continue  # уже есть (лого или fallback) — не ищем
             hint = league_to_country(league) or ""
-            ex = logo_cache.get(f"{t}|{hint}") or logo_cache.get(t)
-            if ex and not _is_fallback(ex): continue
             missing.add((t, league, True))
     
-    print(f"🔎 Поиск логотипов для {len(missing)} пар...")
+    print(f"🔎 Поиск логотипов для {len(missing)} новых пар...")
     if missing:
         await search_all_logos(list(missing), logo_cache, name_en_map)
         await firebase_put("team_logos", _cache_to_fb(logo_cache))
-        if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ: {len(set(FALLBACK_TEAMS))} команд")
+        # перестраиваем индекс после поиска
+        team_logo_idx = build_team_logo_index(logo_cache)
+        if FALLBACK_TEAMS: print(f"🚨 БЕЗ ЛОГОТИПОВ в этом прогоне: {len(set(FALLBACK_TEAMS))} новых команд")
     
     # === СБОРКА ===
     matches_dict = {}
@@ -658,8 +709,8 @@ async def main():
         t1 = ev.get("team1", "")
         t2 = ev.get("team2", "")
         hint = league_to_country(league) or ""
-        hl = find_logo(logo_cache, t1, hint)
-        al = find_logo(logo_cache, t2, hint)
+        hl = find_logo_fast(team_logo_idx, t1, logo_cache, hint)
+        al = find_logo_fast(team_logo_idx, t2, logo_cache, hint)
         
         factors_list = all_factors.get(ev_id, [])
         markets_data = parse_fonbet_odds(factors_list)
