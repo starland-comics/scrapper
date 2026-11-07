@@ -1,24 +1,18 @@
 import asyncio
-import gc
+import time
+import httpx
 import json
 import urllib.parse
-import httpx
 import os
-import time
-import base64
 import re
 import hashlib
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
-from fastapi.responses import Response
-from fastapi.middleware.cors import CORSMiddleware
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, LabeledPrice
+import base64
 from curl_cffi import requests as cffi_requests
+from rapidfuzz import fuzz
 
-BOT_TOKEN = "9010161317:AAEMgcEP5yhgMiyV8OCOwJ5fpxmAUrg0ke8"
-WEBAPP_URL = "https://starland-comics.github.io/winstarsbot/"
 FIREBASE_DB_URL = "https://winstars-435f1-default-rtdb.firebaseio.com"
+FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest"
+TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
 FONBET_BASE = "https://line-lb51.bk6bba-resources.com"
 FONBET_LINE_PATH = "/events/listBase?scopeMarket=1600&lang=ru"
@@ -31,58 +25,9 @@ FONBET_HEADERS = {
     "Origin": "https://www.fon.bet"
 }
 
-LIVE_POLL_SEC = 25
-SETTLE_POLL_SEC = 60
-FINISHED_TTL = 90
-
-# === ПОЛНЫЙ МАППИНГ FONBET ===
-FONBET_FACTORS = {
-    # 1X2
-    921: ("Исход", "П1", False), 922: ("Исход", "Х", False), 923: ("Исход", "П2", False),
-    # Двойной шанс
-    924: ("Двойной шанс", "1Х", False), 925: ("Двойной шанс", "12", False), 926: ("Двойной шанс", "Х2", False),
-    # Обе забьют
-    927: ("Обе забьют", "Нет", False), 928: ("Обе забьют", "Да", False),
-    # Тотал (главная)
-    930: ("Тотал", "ТБ", True), 931: ("Тотал", "ТМ", True),
-    # Форы (все серии) - каждая пара = Ф1/Ф2 с p
-    910: ("Фора", "Ф1", True), 912: ("Фора", "Ф2", True),
-    989: ("Фора", "Ф1", True), 991: ("Фора", "Ф2", True),
-    1672: ("Фора", "Ф1", True), 1675: ("Фора", "Ф2", True),
-    1677: ("Фора", "Ф1", True), 1678: ("Фора", "Ф2", True),
-    1680: ("Фора", "Ф1", True), 1681: ("Фора", "Ф2", True),
-    1683: ("Фора", "Ф1", True), 1684: ("Фора", "Ф2", True),
-    1686: ("Фора", "Ф1", True), 1687: ("Фора", "Ф2", True),
-    1809: ("Фора", "Ф1", True), 1810: ("Фора", "Ф2", True),
-    1812: ("Фора", "Ф1", True), 1813: ("Фора", "Ф2", True),
-    1815: ("Фора", "Ф1", True), 1816: ("Фора", "Ф2", True),
-    1818: ("Фора", "Ф1", True), 1819: ("Фора", "Ф2", True),
-    1821: ("Фора", "Ф1", True), 1822: ("Фора", "Ф2", True),
-    1824: ("Фора", "Ф1", True), 1825: ("Фора", "Ф2", True),
-    1827: ("Фора", "Ф1", True), 1828: ("Фора", "Ф2", True),
-    1830: ("Фора", "Ф1", True), 1831: ("Фора", "Ф2", True),
-    # Инд. тоталы ИТ1/ИТ2
-    1696: ("Инд. тотал 1", "ТБ", True), 1697: ("Инд. тотал 2", "ТБ", True),
-    1727: ("Инд. тотал 1", "ТБ", True), 1728: ("Инд. тотал 2", "ТБ", True),
-    1730: ("Инд. тотал 1", "ТБ", True), 1731: ("Инд. тотал 2", "ТБ", True),
-    1733: ("Инд. тотал 1", "ТБ", True), 1734: ("Инд. тотал 2", "ТБ", True),
-    1736: ("Инд. тотал 1", "ТБ", True), 1737: ("Инд. тотал 2", "ТБ", True),
-    1739: ("Инд. тотал 1", "ТБ", True), 1791: ("Инд. тотал 2", "ТБ", True),
-    1793: ("Инд. тотал 1", "ТБ", True), 1794: ("Инд. тотал 2", "ТБ", True),
-    1796: ("Инд. тотал 1", "ТБ", True), 1797: ("Инд. тотал 2", "ТБ", True),
-    1799: ("Инд. тотал 1", "ТБ", True), 1800: ("Инд. тотал 2", "ТБ", True),
-    1802: ("Инд. тотал 1", "ТБ", True), 1803: ("Инд. тотал 2", "ТБ", True),
-    1805: ("Инд. тотал 1", "ТБ", True), 1806: ("Инд. тотал 2", "ТБ", True),
-    # Доп. тоталы (пары ТБ/ТМ)
-    1569: ("Тотал", "ТМ", True), 1571: ("Тотал", "ТМ", True), 1572: ("Тотал", "ТБ", True),
-    1854: ("Тотал", "ТБ", True), 1871: ("Тотал", "ТМ", True),
-    1873: ("Тотал", "ТБ", True), 1874: ("Тотал", "ТМ", True),
-    1880: ("Тотал", "ТБ", True), 1881: ("Тотал", "ТМ", True),
-    1883: ("Тотал", "ТБ", True), 1884: ("Тотал", "ТМ", True),
-    1886: ("Тотал", "ТБ", True), 1887: ("Тотал", "ТМ", True),
-    2203: ("Тотал", "ТБ", True), 2204: ("Тотал", "ТМ", True),
-    # ОЗ 1-й тайм
-    4241: ("Обе забьют 1-й тайм", "Нет", False), 4242: ("Обе забьют 1-й тайм", "Да", False),
+FOTMOB_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://www.fotmob.com/"
 }
 
 ALLOWED_LEAGUE_PATTERNS = [
@@ -129,69 +74,89 @@ BLACKLIST_WORDS = [
     "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u23", " b team", " ii", " iii",
 ]
 
-_FINISHED_CACHE = {"data": {}, "ts": 0}
+INTL_LEAGUE_WORDS = [
+    "world cup", "euro ", "european championship", "nations", "copa america", "africa cup", "asian cup", "gold cup",
+    "olympic", "friendly international", "confederations"
+]
 
-app = FastAPI(title="WinStars API")
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+COUNTRY_NAMES = {
+    "russia", "germany", "france", "italy", "spain", "england", "portugal", "brazil", "argentina", "tunisia", "thailand",
+    "switzerland", "austria", "belgium", "netherlands", "croatia", "serbia", "greece", "turkey", "japan", "korea", "china",
+    "india", "australia", "mexico", "usa", "canada", "morocco", "egypt", "saudi arabia", "uae", "qatar", "iran", "iraq",
+    "uzbekistan", "kazakhstan", "ukraine", "poland", "czech", "slovakia", "hungary", "romania", "bulgaria", "denmark",
+    "norway", "sweden", "finland", "iceland", "ireland", "scotland", "wales",
+    "россия", "германия", "франция", "италия", "испания", "англия", "португалия", "бразилия", "аргентина", "тунис", "таиланд",
+    "швейцария", "австрия", "бельгия", "нидерланды", "хорватия", "сербия", "греция", "турция", "япония", "корея", "китай",
+    "индия", "австралия", "мексика", "сша", "канада", "марокко", "египет", "саудовская аравия", "оаэ", "катар", "иран",
+    "ирак", "узбекистан", "казахстан", "украина", "польша", "чехия", "словакия", "венгрия", "румыния", "болгария",
+    "дания", "норвегия", "швеция", "финляндия", "исландия", "ирландия", "шотландия", "уэльс",
+}
 
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-)
+FOTMOB_ID_OVERRIDES = {
+    "Порт": 165255, "Порт ФК": 165255, "Порту": 9775, "Тун": 10191, "Акрон": 1068364, "Акрон Тольятти": 1068364,
+    "Родина": 1066681, "Родина Москва": 1066681, "Истанбул Башакшехир": 10068, "Атлетик Бильбао": 9807,
+    "Синт-Трёйден": 10232, "Эштрела Амадора": 14303, "Витория Гимарайнш": 9778, "Витория БА": 9779,
+    "Нью-Йорк Ред Буллс": 9805, "Саламанка УДС": 82679,
+}
 
-http_client = httpx.AsyncClient(timeout=10.0)
+DIRECT_LOGO_URLS = {
+    "Харборо Таун": "https://www.footylogos.com/dls/logo/rgba-v1/harborough-town.png",
+    "Солсбери": "https://www.footylogos.com/dls/logo/rgba-v1/salisbury.png",
+    "Алвчерч": "https://www.footylogos.com/dls/logo/rgba-v1/alvechurch.png",
+    "Стаффорд Рейнджерс": "https://www.footylogos.com/dls/logo/rgba-v1/stafford-rangers.png",
+    "Вустер Сити": "https://www.footylogos.com/dls/logo/rgba-v1/worcester-city.png",
+    "Йовил Таун": "https://www.footylogos.com/dls/logo/rgba-v1/yeovil-town.png",
+    "Олтринчэм": "https://www.footylogos.com/dls/logo/rgba-v1/altrincham.png",
+    "Хорнчерч": "https://www.footylogos.com/dls/logo/rgba-v1/hornchurch.png",
+    "Рашден & Даймондс": "https://www.footylogos.com/dls/logo/rgba-v1/afc-rushden-diamonds.png",
+    "Галифакс Таун": "https://www.footylogos.com/dls/logo/rgba-v1/fc-halifax-town.png",
+    "Анайтасуна": "https://upload.wikimedia.org/wikipedia/en/thumb/8/8a/CD_Anaitasuna_logo.png/180px-CD_Anaitasuna_logo.png",
+    "Хромтау": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/FC_Khromtau_logo.png/180px-FC_Khromtau_logo.png",
+}
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    await http_client.aclose()
+TEAM_OVERRIDES = {
+    "Байер 04": "Bayer Leverkusen", "Майнц 05": "Mainz", "Интер Милан": "Inter", "Комо": "Como", "Атлетик Бильбао": "Athletic Bilbao",
+    "Спортинг Лиссабон": "Sporting CP", "Крылья Советов": "Krylia Sovetov", "Брюгге": "Club Brugge", "Кёльн": "Koln",
+    "Факел": "Fakel Voronezh", "Рубин": "Rubin Kazan", "Енисей": "Yenisey", "Акрон": "Akron Tolyatti", "Родина": "Rodina Moscow",
+    "Алавес": "Alaves", "Венеция": "Venezia", "Витория Гимарайнш": "Vitoria Guimaraes", "Витория БА": "Vitoria Setubal",
+    "Виктория Пльзень": "Viktoria Plzen", "Юнион Сен-Жиллуаз": "Union St. Gilloise", "Дармштадт 98": "Darmstadt",
+    "Торренсе": "Torrent", "Синт-Трёйден": "Sint-Truiden", "Аль-Кадисия Хубар": "Al-Qadsiah", "Аль-Шабаб Рияд": "Al-Shabab",
+    "Аль-Наср Рияд": "Al-Nassr", "Аль-Хиляль Рияд": "Al-Hilal", "Аль-Ахли Джидда": "Al-Ahli", "Аль-Иттихад Джидда": "Al-Ittihad",
+    "Аль-Иттифак": "Al-Ettifaq", "Аль-Таавун": "Al-Taawoun", "Аль-Фатех": "Al-Fateh", "Аль-Фейха": "Al-Fayha",
+    "Аль-Фейсали Харма": "Al-Faisaly", "Аль-Хазм": "Al-Hazem", "Эстеглаль Тегеран": "Esteghlal", "Тэджон Ситизен": "Daejeon Citizen",
+    "Чонбук": "Jeonbuk", "Штурм": "Sturm Graz", "Камбур": "Cambuur", "ВПР Астана": "Astana", "Хромтау": "Khromtau",
+    "Кайсар": "Kaisar", "Нью-Йорк Ред Буллс": "New York Red Bulls", "Лос-Анджелес Гэлакси": "LA Galaxy",
+    "Текстильщик Иваново": "Tekstilshchik", "Памплона": "Osasuna", "Анайтасуна": "Anaitasuna", "Саламанка УДС": "Salamanca UDS",
+    "Реус Реддис": "Reus", "Волна Ковернино": "Volna", "Конган": "Khon Kaen", "Сабах Баку": "Sabah", "Истанбул Башакшехир": "Istanbul Basaksehir",
+    "Унив. Крайова": "Universitatea Craiova", "Интер Эскальдес": "Inter Club d'Escaldes", "Эштрела Амадора": "Estrela Amadora",
+    "Солсбери": "Salisbury FC", "Алвчерч": "Alvechurch FC", "Йовил Таун": "Yeovil Town", "Галифакс Таун": "FC Halifax Town",
+    "Таранкон": "Tarazona", "Стаффорд Рейнджерс": "Stafford Rangers", "Вустер Сити": "Worcester City", "Рашден & Даймондс": "AFC Rushden & Diamonds",
+    "Хорнчерч": "Hornchurch", "Олтринчэм": "Altrincham", "Харборо Таун": "Harborough Town", "Аль-Нахда Бурайми": "Al-Nahda Buraimi",
+    "Аль-Вахда Абу-Даби": "Al Wahda Abu Dhabi", "Аль-Файсали Амман": "Al Faisaly Amman", "Аль-Джазира Абу-Даби": "Al Jazira Abu Dhabi", "Аль-Мухаррак": "Al-Muharraq",
+}
 
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept(); self.active_connections.append(websocket)
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections: self.active_connections.remove(websocket)
-    async def broadcast(self, message: dict):
-        dead = []
-        for c in self.active_connections:
-            try: await c.send_text(json.dumps(message))
-            except: dead.append(c)
-        for conn in dead: self.disconnect(conn)
+LEAGUE_COUNTRY_HINTS = {
+    "португал": "portugal", "таиланд": "thailand", "тай": "thailand", "англ": "england", "испан": "spain", "итал": "italy",
+    "герман": "germany", "франц": "france", "бразил": "brazil", "аргентин": "argentina", "турц": "turkey", "росси": "russia",
+    "украин": "ukraine", "казах": "kazakhstan", "нидерланд": "netherlands", "голланд": "netherlands", "бельги": "belgium",
+    "швейцар": "switzerland", "австри": "austria", "польш": "poland", "чехи": "czech", "хорват": "croatia", "серби": "serbia",
+    "грец": "greece", "израил": "israel", "египет": "egypt", "саудов": "saudi", "эмират": "uae", "япон": "japan", "корея": "korea",
+    "китай": "china", "инди": "india", "австрал": "australia", "мексик": "mexico", "сша": "usa", "америк": "usa",
+    "шотланд": "scotland", "ирланд": "ireland", "дания": "denmark", "норвег": "norway", "швец": "sweden", "финлянд": "finland",
+    "румын": "romania", "болгар": "bulgaria", "венгр": "hungary", "словен": "slovenia", "словак": "slovakia", "азерб": "azerbaijan",
+    "армен": "armenia", "грузи": "georgia", "узбек": "uzbekistan", "киргиз": "kyrgyzstan", "таджик": "tajikistan",
+}
 
-manager = ConnectionManager()
+LOGO_STATS = {"fotmob": 0, "thesportsdb": 0, "direct": 0, "fallback": 0, "cache": 0}
+FALLBACK_TEAMS = []
 
-async def firebase_get(path: str):
-    try:
-        resp = await http_client.get(f"{FIREBASE_DB_URL}/{path}.json")
-        return resp.json()
-    except: return None
+def _normalize(s):
+    s = (s or "").lower().strip()
+    for w in (" fc", " cf", " sc", " ac", " fk", " afc", " club", " фк", " клуб"):
+        s = s.replace(w, "").strip()
+    return s
 
-async def firebase_put(path: str, data: dict):
-    try:
-        r = await http_client.put(f"{FIREBASE_DB_URL}/{path}.json", json=data, timeout=60.0)
-        return r.status_code == 200
-    except: return False
-
-async def firebase_patch(path: str, data: dict):
-    try: await http_client.patch(f"{FIREBASE_DB_URL}/{path}.json", json=data)
-    except: pass
-
-async def firebase_delete(path: str):
-    try: await http_client.delete(f"{FIREBASE_DB_URL}/{path}.json")
-    except: pass
-
-async def get_finished_cached():
-    now = time.time()
-    if now - _FINISHED_CACHE["ts"] < FINISHED_TTL and _FINISHED_CACHE["data"]:
-        return _FINISHED_CACHE["data"]
-    raw = await firebase_get("finished_matches") or {}
-    if not isinstance(raw, dict): raw = {}
-    _FINISHED_CACHE["data"] = raw
-    _FINISHED_CACHE["ts"] = now
-    return raw
-
-def _is_allowed_league(league):
+def is_allowed_league(league):
     if not league or league == "Футбол": return False
     low = league.lower().strip()
     for f in FORBIDDEN_LEAGUE_WORDS:
@@ -202,137 +167,200 @@ def _is_allowed_league(league):
         except: pass
     return False
 
-def _format_param(p):
-    """Нормализует p: 350→3.5, -350→-3.5, 1.5→1.5, 0→0"""
-    if p is None: return None
-    try: p_val = float(p)
-    except: return str(p)
-    if p_val != int(p_val): return f"{p_val:g}"
-    p_int = int(p_val)
-    if abs(p_int) >= 100: return f"{p_int / 100:g}"
-    elif abs(p_int) >= 10: return f"{p_int / 10:g}"
-    return str(p_int)
+def league_to_country(comp_name):
+    if not comp_name: return None
+    low = comp_name.lower()
+    for marker, country in LEAGUE_COUNTRY_HINTS.items():
+        if marker in low: return country
+    return None
 
-def _format_p_with_sign(p):
-    """Формат с явным знаком для фор/тоталов: 1.5→'+1.5', -1→'-1', 0→'0'"""
-    s = _format_param(p)
-    if s is None: return ""
-    try:
-        v = float(s)
-        if v > 0: return f"+{s}"
-        return s
-    except: return s
+def is_national_team(name, league=""):
+    n = _normalize(name); l = (league or "").lower()
+    if n in COUNTRY_NAMES: return True
+    if any(w in l for w in ("national", "international", "world cup", "euro ", "nations")): return True
+    if "сборная" in n or "national" in n: return True
+    return False
+
+def make_fallback_logo(name):
+    initials = "".join(w[0] for w in name.split()[:2]).upper() or "?"
+    color = "#" + hashlib.md5(name.encode("utf-8")).hexdigest()[:6]
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">'
+           f'<rect width="80" height="80" rx="16" fill="{color}"/>'
+           f'<text x="40" y="52" font-size="26" text-anchor="middle" fill="white" '
+           f'font-family="Arial,sans-serif" font-weight="700">{initials}</text></svg>')
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+def _is_fallback(logo):
+    return isinstance(logo, str) and logo.startswith("data:image/svg")
+
+def _encode_key(k):
+    if not k: return "_"
+    return "b64_" + base64.urlsafe_b64encode(k.encode("utf-8")).decode("ascii").rstrip("=")
+
+def _decode_key(k):
+    if k and isinstance(k, str) and k.startswith("b64_"):
+        try:
+            padding = "=" * (-len(k[4:]) % 4)
+            return base64.urlsafe_b64decode(k[4:] + padding).decode("utf-8")
+        except Exception: return k
+    return k
+
+def _cache_to_fb(cache): return {_encode_key(k): v for k, v in cache.items() if k and v}
+def _cache_from_fb(raw):
+    if not raw or not isinstance(raw, dict): return {}
+    return {_decode_key(k): v for k, v in raw.items()}
+
+def build_team_logo_index(cache):
+    idx = {}
+    for k, v in cache.items():
+        if not v: continue
+        team = k.split("|")[0] if "|" in k else k
+        if team not in idx: idx[team] = v
+    return idx
+
+def batch_translate_ru_to_en(texts):
+    if not texts: return {}
+    result = {}
+    for i in range(0, len(texts), 40):
+        chunk = texts[i:i+40]
+        try:
+            r = cffi_requests.get(TRANSLATE_URL, params={"client": "gtx", "sl": "ru", "tl": "en", "dt": "t", "q": " | ".join(chunk)}, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                segs = data[0] if data and data[0] else []
+                full = "".join(s[0] for s in segs if s and s[0])
+                parts = [p.strip() for p in full.split("|")]
+                if len(parts) == len(chunk):
+                    for orig, trans in zip(chunk, parts):
+                        for w in [" FC", "FC ", " FK", "FK ", " CF", "CF "]:
+                            trans = trans.replace(w, "")
+                        result[orig] = trans.strip() or orig
+                else:
+                    for t in chunk: result[t] = t
+            else:
+                for t in chunk: result[t] = t
+        except Exception:
+            for t in chunk: result[t] = t
+    return result
+
+def pick_best_candidate(cands, target_name, country_hint):
+    if not cands: return None
+    cands = [c for c in cands if not is_national_team(c.get("name", ""), c.get("league", ""))]
+    if not cands: return None
+    target = _normalize(target_name)
+    country_hint = (country_hint or "").lower()
+    def base_score(c):
+        return fuzz.token_set_ratio(target, _normalize(c.get("name", ""))) * 10 + min(c.get("score", 0), 200)
+    if country_hint:
+        matching = [c for c in cands if country_hint in (c.get("league") or "").lower() or country_hint in (c.get("country") or "").lower()]
+        if matching: return max(matching, key=base_score)
+    return max(cands, key=base_score)
+
+def search_fotmob_candidates(team_name, name_en):
+    queries = [name_en, team_name]
+    seen, out = set(), []
+    for q in queries:
+        if not q or q in seen: continue
+        seen.add(q)
+        try:
+            url = f"{FOTMOB_SEARCH_URL}?term={urllib.parse.quote(q)}&lang=ru"
+            r = cffi_requests.get(url, headers=FOTMOB_HEADERS, impersonate="chrome120", timeout=10)
+            if r.status_code != 200: continue
+            for group in r.json():
+                for item in group.get("suggestions", []):
+                    if item.get("type") != "team": continue
+                    league_name = (item.get("leagueName") or "").lower()
+                    if any(w in league_name for w in INTL_LEAGUE_WORDS): continue
+                    if not item.get("id"): continue
+                    out.append({
+                        "id": item["id"], "name": item.get("name", ""),
+                        "league": league_name, "score": item.get("score", 0),
+                        "logo": f"https://images.fotmob.com/image_resources/logo/teamlogo/{item['id']}.png",
+                        "source": "fotmob",
+                    })
+        except Exception: pass
+    return out
+
+async def search_thesportsdb(name_en):
+    variants = [name_en, f"{name_en} FC", f"FC {name_en}", f"{name_en} AFC", f"AFC {name_en}"]
+    seen, out = set(), []
+    for q in variants:
+        if q in seen: continue
+        seen.add(q)
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get("https://www.thesportsdb.com/api/v1/json/3/searchteams.php", params={"t": q})
+                if r.status_code != 200: continue
+                for t in (r.json() or {}).get("teams") or []:
+                    if not t.get("strBadge"): continue
+                    sport = (t.get("strSport") or "").lower()
+                    if sport and sport != "soccer": continue
+                    if "national" in (t.get("strTeam") or "").lower(): continue
+                    out.append({"name": t.get("strTeam", ""), "league": (t.get("strLeague") or "").lower(),
+                                "country": (t.get("strCountry") or "").lower(), "logo": t.get("strBadge"), "source": "thesportsdb"})
+        except Exception: continue
+    return out
+
+async def resolve_logo(team_ru, comp_name, cache, name_en_map, force_refresh=False):
+    country = league_to_country(comp_name) or ""
+    key = f"{team_ru}|{country}"
+    if not force_refresh:
+        for ek in (key, team_ru):
+            ex = cache.get(ek)
+            if ex and not _is_fallback(ex):
+                LOGO_STATS["cache"] += 1
+                return ex
+    direct = DIRECT_LOGO_URLS.get(team_ru)
+    if direct:
+        cache[key] = direct; LOGO_STATS["direct"] += 1; return direct
+    fid = FOTMOB_ID_OVERRIDES.get(team_ru)
+    if fid:
+        logo = f"https://images.fotmob.com/image_resources/logo/teamlogo/{fid}.png"
+        cache[key] = logo; LOGO_STATS["fotmob"] += 1; return logo
+    name_en = TEAM_OVERRIDES.get(team_ru) or name_en_map.get(team_ru) or team_ru
+    best = pick_best_candidate(search_fotmob_candidates(team_ru, name_en), name_en, country)
+    if best and best.get("logo"):
+        cache[key] = best["logo"]; LOGO_STATS["fotmob"] += 1; return best["logo"]
+    best = pick_best_candidate(await search_thesportsdb(name_en), name_en, country)
+    if best and best.get("logo"):
+        cache[key] = best["logo"]; LOGO_STATS["thesportsdb"] += 1; return best["logo"]
+    fb = make_fallback_logo(team_ru)
+    cache[key] = fb; LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team_ru); return fb
+
+async def search_all_logos(teams_with_league, cache, name_en_map):
+    sem = asyncio.Semaphore(40)
+    async def one(team, league, force):
+        async with sem:
+            try: await resolve_logo(team, league, cache, name_en_map, force_refresh=force)
+            except Exception:
+                hint = league_to_country(league) or ""
+                cache[f"{team}|{hint}"] = make_fallback_logo(team)
+                LOGO_STATS["fallback"] += 1; FALLBACK_TEAMS.append(team)
+    await asyncio.gather(*(one(t, l, f) for t, l, f in teams_with_league))
+
+# ============ FONBET ============
+
+def fetch_fonbet_data(url):
+    for _ in range(2):
+        try:
+            r = cffi_requests.get(url, headers=FONBET_HEADERS, impersonate="chrome120", timeout=45)
+            if r.status_code == 200:
+                try: return r.json()
+                except json.JSONDecodeError:
+                    print(f"   ⚠️ Не JSON: {r.text[:200]}")
+                    return None
+            else:
+                print(f"   ⚠️ HTTP {r.status_code}")
+        except Exception as e:
+            print(f"   ⚠️ {e}")
+            time.sleep(1)
+    return None
 
 def _parse_start_ts(ev):
     st = ev.get("startTime")
     if st is None: return 0
     try: return int(st)
     except: return 0
-
-def _is_match_live(ev, now_ts):
-    st = _parse_start_ts(ev)
-    if st <= 0: return False
-    elapsed = now_ts - st
-    return 0 <= elapsed < int(3.5 * 3600)
-
-def _extract_score(li):
-    if not li: return None, None, None
-    timer_str = li.get("timer")
-    scores = li.get("scores")
-    s1 = s2 = None
-    if isinstance(scores, list):
-        for block in scores:
-            if isinstance(block, list) and block:
-                first = block[0]
-                if isinstance(first, dict):
-                    c1 = first.get("c1"); c2 = first.get("c2")
-                    if c1 is not None and c2 is not None:
-                        try: s1 = int(c1); s2 = int(c2); break
-                        except: pass
-    if s1 is None:
-        c1 = li.get("c1"); c2 = li.get("c2")
-        if c1 is not None and c2 is not None:
-            try: s1 = int(c1); s2 = int(c2)
-            except: pass
-    minute = None
-    if timer_str and isinstance(timer_str, str) and ":" in timer_str:
-        try: minute = int(timer_str.split(":")[0])
-        except: pass
-    return s1, s2, minute
-
-def _parse_markets(factors_list):
-    seen = set()
-    markets = {}
-    for f in factors_list:
-        fid = f.get("f")
-        if fid not in FONBET_FACTORS: continue
-        group, base, has_param = FONBET_FACTORS[fid]
-        odds = f.get("v")
-        if odds is None: continue
-        try: odds = float(odds)
-        except: continue
-        if odds <= 1.0: continue
-        name = base
-        if has_param:
-            p_str = _format_p_with_sign(f.get("p"))
-            if not p_str: continue
-            name = f"{base} {p_str}"
-        key = (group, name)
-        if key in seen: continue
-        seen.add(key)
-        if group not in markets: markets[group] = []
-        markets[group].append({"name": name, "odds": odds})
-    return markets
-
-def _filter_decided(markets, s1, s2):
-    if s1 is None or s2 is None: return markets
-    filtered = {}
-    total = s1 + s2
-    for g, outs in markets.items():
-        if g == "Обе забьют":
-            if s1 > 0 and s2 > 0: continue
-            filtered[g] = outs
-        elif "Тотал" in g:
-            new_outs = []
-            for o in outs:
-                n = o["name"]
-                lim_str = None
-                if n.startswith("ТБ "): lim_str = n[3:]
-                elif n.startswith("ТМ "): lim_str = n[3:]
-                if lim_str:
-                    try: lim = float(lim_str.replace("+",""))
-                    except: new_outs.append(o); continue
-                    if total > lim: continue
-                new_outs.append(o)
-            if new_outs: filtered[g] = new_outs
-        else:
-            filtered[g] = outs
-    return filtered
-
-def _fetch_fonbet(url):
-    for _ in range(2):
-        try:
-            r = cffi_requests.get(url, headers=FONBET_HEADERS, impersonate="chrome120", timeout=30)
-            if r.status_code == 200:
-                try: return r.json()
-                except: return None
-        except: time.sleep(1)
-    return None
-
-def _build_logo_index(raw_cache):
-    idx = {}
-    if not isinstance(raw_cache, dict): return idx
-    for k, v in raw_cache.items():
-        if not v: continue
-        real_k = k
-        if k.startswith("b64_"):
-            try:
-                pad = "=" * (-len(k[4:]) % 4)
-                real_k = base64.urlsafe_b64decode(k[4:] + pad).decode("utf-8")
-            except: continue
-        team = real_k.split("|")[0] if "|" in real_k else real_k
-        if team not in idx: idx[team] = v
-    return idx
 
 def _build_sport_hierarchy(all_sports):
     entry_by_id = {}; parent_by_id = {}
@@ -362,450 +390,109 @@ def _build_sport_hierarchy(all_sports):
     for sp_id in entry_by_id: top_by_id[sp_id] = find_top(sp_id)
     return entry_by_id, parent_by_id, top_by_id
 
-async def fonbet_scraper_worker():
-    print(f"⚡ fonbet_scraper_worker запущен (опрос {LIVE_POLL_SEC} сек)...")
-    cycle = 0
-    prev_event_ids = set()
-    
-    while True:
-        try:
-            t0 = time.time()
-            now_ts = int(time.time())
-            seven_days = 7 * 86400
-            
-            line_data = _fetch_fonbet(FONBET_BASE + FONBET_LINE_PATH)
-            live_data = _fetch_fonbet(FONBET_BASE + FONBET_LIVE_PATH)
-            
-            if not line_data and not live_data:
-                await asyncio.sleep(LIVE_POLL_SEC); continue
-            
-            events_by_id = {}
-            all_factors = {}
-            all_sports = []
-            all_live = {}
-            
-            for data in [line_data, live_data]:
-                if not data: continue
-                events = data.get("events", [])
-                factors_raw = data.get("factors", [])
-                custom_factors_raw = data.get("customFactors", [])
-                sps = data.get("sports", [])
-                live_infos = data.get("liveEventInfos", [])
-                
-                all_sports.extend(sps)
-                for li in live_infos:
-                    eid = li.get("eventId")
-                    if eid: all_live[eid] = li
-                
-                for f in factors_raw:
-                    eid = f.get("e")
-                    if eid: all_factors.setdefault(eid, []).append(f)
-                for cf in custom_factors_raw:
-                    eid = cf.get("e")
-                    if eid: all_factors.setdefault(eid, []).extend(cf.get("factors", []))
-                
-                for ev in events:
-                    eid = ev.get("id")
-                    if eid and eid not in events_by_id:
-                        events_by_id[eid] = dict(ev)
-            
-            entry_by_id, parent_by_id, top_by_id = _build_sport_hierarchy(all_sports)
-            
-            tournament_by_id = {}
-            for sp in all_sports:
-                if sp.get('kind') == 'sport': continue
-                sid = sp.get('id'); nm = sp.get('name', '')
-                if sid and nm: tournament_by_id[sid] = nm
-            
-            raw_cache = await firebase_get("team_logos") or {}
-            logo_idx = _build_logo_index(raw_cache)
-            
-            matches_dict = {}
-            current_ids = set()
-            live_cnt = 0
-            
-            for ev in events_by_id.values():
-                if ev.get("rootKind") != 1 or ev.get("kind") != 1: continue
-                t1 = ev.get("team1", ""); t2 = ev.get("team2", "")
-                if not t1 or not t2: continue
-                
-                st = _parse_start_ts(ev)
-                if st <= 0: continue
-                
-                sid = ev.get("sportId")
-                top_sport = top_by_id.get(sid)
-                if not top_sport: continue
-                sport_name = (top_sport.get('name') or '').lower()
-                if sport_name not in ('футбол', 'football', 'soccer'): continue
-                
-                eid = ev.get("id")
-                s1, s2, timer = _extract_score(all_live.get(eid))
-                is_live = s1 is not None and s2 is not None and _is_match_live(ev, now_ts)
-                if not is_live: is_live = _is_match_live(ev, now_ts) and timer is not None
-                
-                if not is_live:
-                    if st < now_ts - int(3.5 * 3600): continue
-                    if st > now_ts + seven_days: continue
-                
-                league = tournament_by_id.get(sid, "")
-                text = f"{t1} {t2}".lower()
-                if any(w in text for w in BLACKLIST_WORDS): continue
-                if not _is_allowed_league(league): continue
-                
-                mid = f"fonbet_{eid}"
-                current_ids.add(mid)
-                
-                markets_data = _parse_markets(all_factors.get(eid, []))
-                if is_live and s1 is not None and s2 is not None:
-                    markets_data = _filter_decided(markets_data, s1, s2)
-                
-                p1 = px = p2 = None
-                if "Исход" in markets_data:
-                    for o in markets_data["Исход"]:
-                        if o["name"] == "П1": p1 = o["odds"]
-                        elif o["name"] == "Х": px = o["odds"]
-                        elif o["name"] == "П2": p2 = o["odds"]
-                
-                score = "VS"
-                if is_live:
-                    if s1 is not None and s2 is not None: score = f"{s1} : {s2}"
-                    status_str = f"LIVE {timer}'" if timer is not None else "LIVE"
-                    live_cnt += 1
-                else:
-                    status_str = time.strftime("%d.%m %H:%M", time.localtime(st))
-                
-                matches_dict[mid] = {
-                    "title": f"{t1} - {t2}", "home": t1, "away": t2,
-                    "homeLogo": logo_idx.get(t1, ""), "awayLogo": logo_idx.get(t2, ""),
-                    "league": league,
-                    "status": status_str, "score": score,
-                    "start_time": st,
-                    "odds": {"1": p1, "X": px, "2": p2},
-                    "markets": markets_data
-                }
-            
-            disappeared = prev_event_ids - current_ids
-            if disappeared:
-                cached_old = await firebase_get("matches") or {}
-                finished_known = await firebase_get("finished_matches") or {}
-                for mid in disappeared:
-                    if mid in finished_known: continue
-                    old_m = cached_old.get(mid)
-                    if not isinstance(old_m, dict): continue
-                    score_str = old_m.get("score", "")
-                    if ":" in score_str:
-                        try:
-                            s1_old, s2_old = [int(x.strip()) for x in score_str.split(":")]
-                            await firebase_patch(f"finished_matches/{mid}", {
-                                "score1": s1_old, "score2": s2_old, "source": "fonbet_last"
-                            })
-                            print(f"   🏁 [ФИНАЛ] {old_m.get('title')}: {s1_old}:{s2_old}")
-                        except: pass
-            
-            prev_event_ids = current_ids
-            
-            if matches_dict:
-                await firebase_put("matches", matches_dict)
-                print(f"🔄 [FONBET] {len(matches_dict)} матчей (LIVE: {live_cnt}) за {time.time()-t0:.1f}s")
-        
-        except Exception as e:
-            print(f"⚠️ fonbet_scraper: {e}")
-        
-        cycle += 1
-        if cycle % 15 == 0: gc.collect()
-        await asyncio.sleep(LIVE_POLL_SEC)
+# ============ FIREBASE ============
 
-def calculate_outcome(outcome_str, s1, s2):
-    o = outcome_str.lower().strip()
-    if o in ["п1", "1", "победа 1", "победа хозяев"]: return s1 > s2
-    if o in ["х", "x", "ничья"]: return s1 == s2
-    if o in ["п2", "2", "победа 2", "победа гостей"]: return s2 > s1
-    if o in ["1x", "1х"]: return s1 >= s2
-    if o in ["12", "x2"]: return s1 != s2
-    if o in ["x2", "х2"]: return s2 >= s1
-    if o in ["да", "обе забьют", "оз да"]: return s1 > 0 and s2 > 0
-    if o in ["нет", "оз нет"]: return s1 == 0 or s2 == 0
-    m_over = re.search(r'(?:тб|тотал больше|больше)\s*([+-]?\d+(?:\.\d+)?)', o)
-    if m_over:
-        limit = float(m_over.group(1)); total = s1 + s2
-        if total > limit: return True
-        if total < limit: return False
-        return None
-    m_under = re.search(r'(?:тм|тотал меньше|меньше)\s*([+-]?\d+(?:\.\d+)?)', o)
-    if m_under:
-        limit = float(m_under.group(1)); total = s1 + s2
-        if total < limit: return True
-        if total > limit: return False
-        return None
-    m_f1 = re.search(r'(?:ф1|фора 1|фора хозяев)\s*([+-]?\d+(?:\.\d+)?)', o)
-    if m_f1:
-        val = float(m_f1.group(1)); res = s1 + val - s2
-        if res > 0: return True
-        if res < 0: return False
-        return None
-    m_f2 = re.search(r'(?:ф2|фора 2|фора гостей)\s*([+-]?\d+(?:\.\d+)?)', o)
-    if m_f2:
-        val = float(m_f2.group(1)); res = s2 + val - s1
-        if res > 0: return True
-        if res < 0: return False
-        return None
-    print(f"   ⚠️ Неизвестный тип ставки: {outcome_str}")
-    return False
-
-async def settle_bets_worker():
-    print("🛠 settle_bets_worker запущен...")
-    cycle = 0
-    while True:
-        try:
-            active_bets = await firebase_get("active_bets") or {}
-            if isinstance(active_bets, dict) and active_bets:
-                finished = await get_finished_cached()
-                for bet_id, bet in list(active_bets.items()):
-                    try:
-                        if not isinstance(bet, dict): continue
-                        events = bet.get("events", [])
-                        if not isinstance(events, list): continue
-                        all_finished = True; results = []; is_void = False
-                        for event in events:
-                            if not isinstance(event, dict): all_finished = False; break
-                            m_id = event.get("match_id")
-                            if m_id not in finished: all_finished = False; continue
-                            res = finished[m_id]
-                            if not isinstance(res, dict): all_finished = False; break
-                            if res.get("void"): is_void = True
-                            results.append(res)
-                        if not all_finished or not results: continue
-                        user_id = bet.get("user_id")
-                        if is_void:
-                            status = "void"
-                            user = await firebase_get(f"users/{user_id}")
-                            if isinstance(user, dict):
-                                refund = bet.get("amount", 0)
-                                new_bal = user.get("balance", 0) + refund
-                                new_total = max(0, user.get("total_bets", 1) - 1)
-                                await firebase_patch(f"users/{user_id}", {"balance": new_bal, "total_bets": new_total})
-                        else:
-                            is_won = True
-                            for i, event in enumerate(events):
-                                res = results[i]
-                                s1 = res.get("score1", 0); s2 = res.get("score2", 0)
-                                oc = event.get("outcome_key") or event.get("outcome", "")
-                                ws = calculate_outcome(oc, s1, s2)
-                                if ws is False: is_won = False; break
-                                elif ws is None: is_won = False; break
-                            status = "won" if is_won else "lost"
-                            if status == "won":
-                                user = await firebase_get(f"users/{user_id}")
-                                if isinstance(user, dict):
-                                    win_amount = bet.get("amount", 0) * bet.get("total_coefficient", 1)
-                                    await firebase_patch(f"users/{user_id}", {
-                                        "balance": user.get("balance", 0) + win_amount,
-                                        "profit": user.get("profit", 0) + (win_amount - bet.get("amount", 0)),
-                                        "wins": user.get("wins", 0) + 1
-                                    })
-                        await firebase_patch(f"bets/{bet_id}", {"status": status})
-                        if user_id: await firebase_patch(f"users/{user_id}/bets/{bet_id}", {"status": status})
-                        await firebase_delete(f"active_bets/{bet_id}")
-                    except Exception as e:
-                        print(f"⚠️ Ставка {bet_id}: {e}")
-        except Exception as e:
-            print(f"⚠️ settle_bets: {e}")
-        cycle += 1
-        if cycle % 15 == 0: gc.collect()
-        await asyncio.sleep(SETTLE_POLL_SEC)
-
-@app.on_event("startup")
-async def startup_event():
-    print("🚀 [Main] Запуск WinStars API...")
-    asyncio.create_task(dp.start_polling(bot))
-    asyncio.create_task(fonbet_scraper_worker())
-    asyncio.create_task(settle_bets_worker())
-    print("✅ Все фоновые воркеры запущены")
-
-@app.get("/api/proxy-image")
-async def proxy_image(url: str):
+async def firebase_get(path):
     try:
-        resp = await http_client.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5.0)
-        if resp.status_code == 200: return Response(content=resp.content, media_type="image/png")
-    except: pass
-    return Response(status_code=404)
+        async with httpx.AsyncClient() as client:
+            return (await client.get(f"{FIREBASE_DB_URL}/{path}.json", timeout=15.0)).json()
+    except Exception: return None
 
-@app.get("/api/user/sync")
-async def sync_user(initData: str = Query("")):
-    user_data = {"id": 12345678, "first_name": "Игрок", "username": "user"}
-    if initData:
-        try:
-            parsed_qs = urllib.parse.parse_qs(initData, keep_blank_values=True)
-            data_dict = {k: v[0] for k, v in parsed_qs.items() if k != "hash"}
-            user_data = json.loads(data_dict.get("user", "{}"))
-        except: pass
-    user_id = str(user_data.get("id", 12345678))
-    existing_user = await firebase_get(f"users/{user_id}")
-    if not isinstance(existing_user, dict) or "balance" not in existing_user:
-        old_balance = existing_user.get("balance", 0) if isinstance(existing_user, dict) else 0
-        default_user = {
-            "user_id": user_id, "username": user_data.get("username", "user"),
-            "first_name": user_data.get("first_name", "Игрок"),
-            "photo_url": user_data.get("photo_url", f"https://api.dicebear.com/7.x/bottts/svg?seed={user_id}"),
-            "balance": old_balance if isinstance(old_balance, (int, float)) else 0,
-            "total_bets": existing_user.get("total_bets", 0) if isinstance(existing_user, dict) else 0,
-            "wins": existing_user.get("wins", 0) if isinstance(existing_user, dict) else 0,
-            "profit": existing_user.get("profit", 0) if isinstance(existing_user, dict) else 0
-        }
-        await firebase_put(f"users/{user_id}", default_user)
-        return {"status": "ok", "user": default_user}
-    return {"status": "ok", "user": existing_user}
-
-@app.api_route("/api/matches", methods=["GET", "HEAD"])
-async def get_matches():
-    matches = await firebase_get("matches")
-    return {"matches": matches if isinstance(matches, dict) else {}}
-
-@app.get("/api/match/{match_id}/markets")
-async def get_match_markets(match_id: str):
-    match_db = await firebase_get(f"matches/{match_id}")
-    markets_data = {}
-    if isinstance(match_db, dict):
-        if isinstance(match_db.get("markets"), dict) and match_db["markets"]:
-            markets_data = match_db["markets"]
-        if not markets_data and match_db.get("odds"):
-            odds = match_db["odds"]
-            p1, px, p2 = odds.get("1"), odds.get("X"), odds.get("2")
-            if p1 and px and p2:
-                markets_data = {"Исход": [
-                    {"name": "П1", "odds": p1}, {"name": "Х", "odds": px}, {"name": "П2", "odds": p2},
-                ]}
-    return {"markets": markets_data}
-
-@app.get("/api/user/bets")
-async def get_user_bets(user_id: int):
-    bets_dict = await firebase_get(f"users/{user_id}/bets")
-    if not isinstance(bets_dict, dict): return {"bets": []}
-    return {"bets": [{"id": k, **v} for k, v in bets_dict.items() if isinstance(v, dict)]}
-
-@app.post("/api/bets/place")
-async def place_bet(request: Request):
-    req = await request.json()
-    user_id = req.get("user_id"); amount = req.get("amount")
-    bets = req.get("bets", []); bet_type = req.get("type", "single")
-    
-    if amount < 10: raise HTTPException(status_code=400, detail="Минимум 10 звёзд")
-    if not bets: raise HTTPException(status_code=400, detail="Нет исходов")
-    
-    user = await firebase_get(f"users/{user_id}")
-    if not isinstance(user, dict): raise HTTPException(status_code=404, detail="Профиль не найден")
-    user_balance = user.get("balance", 0)
-    if not isinstance(user_balance, (int, float)): user_balance = 0
-    if user_balance < amount: raise HTTPException(status_code=400, detail="Недостаточно звёзд")
-    
-    # Защита от дублей
-    new_fingerprint = hashlib.md5(
-        f"{user_id}|{amount}|{json.dumps(bets, sort_keys=True)}".encode()
-    ).hexdigest()
-    active_all = await firebase_get("active_bets") or {}
-    if isinstance(active_all, dict):
-        current_ts = time.time()
-        for _bid, _b in active_all.items():
-            if not isinstance(_b, dict): continue
-            _b_ts = _b.get("timestamp", 0)
-            if current_ts - _b_ts > 10: continue
-            old_fp = hashlib.md5(
-                f"{_b.get('user_id')}|{_b.get('amount')}|{json.dumps(_b.get('events', []), sort_keys=True)}".encode()
-            ).hexdigest()
-            if old_fp == new_fingerprint:
-                raise HTTPException(status_code=429, detail="Дубликат ставки. Подождите 10 секунд.")
-    
-    total_coeff = 1.0
-    for b in bets: total_coeff *= float(b.get("coefficient", 1.0))
-    total_coeff = round(total_coeff, 2)
-    new_balance = round(user_balance - amount, 2)
-    
-    bet_data = {
-        "user_id": str(user_id), "type": bet_type, "events": bets,
-        "amount": amount, "total_coefficient": total_coeff,
-        "potential_win": round(amount * total_coeff, 2),
-        "status": "active", "timestamp": int(time.time())
-    }
-    
-    bet_ref = await http_client.post(f"{FIREBASE_DB_URL}/bets.json", json=bet_data)
-    bet_id = bet_ref.json().get("name") if bet_ref.status_code == 200 else None
-    if bet_id:
-        await firebase_put(f"users/{user_id}/bets/{bet_id}", bet_data)
-        await firebase_put(f"active_bets/{bet_id}", {
-            "user_id": str(user_id), "events": bets,
-            "amount": amount, "total_coefficient": total_coeff,
-            "timestamp": time.time(),
-        })
-    
-    await firebase_patch(f"users/{user_id}", {"balance": new_balance, "total_bets": user.get("total_bets", 0) + 1})
-    return {"status": "ok", "new_balance": new_balance, "message": "Прогноз принят!"}
-
-@app.post("/api/cashier/invoice")
-async def create_invoice(request: Request):
-    req = await request.json()
-    user_id = req.get("user_id"); amount = req.get("amount")
-    payload = f"topup_{user_id}_{amount}"
+async def firebase_put(path, data):
     try:
-        link = await bot.create_invoice_link(title="WinStars", description=f"Пополнение {amount} ★", payload=payload, currency="XTR", prices=[LabeledPrice(label="Звёзды", amount=amount)])
-        return {"status": "ok", "invoice_link": link}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+        async with httpx.AsyncClient() as client:
+            r = await client.put(f"{FIREBASE_DB_URL}/{path}.json", json=data, timeout=60.0)
+            return r.status_code == 200
+    except Exception: return False
 
-@app.post("/api/cashier/promo")
-async def activate_promo(request: Request):
-    req = await request.json()
-    code = req.get("code").upper(); user_id = req.get("user_id")
-    promo = await firebase_get(f"promo_codes/{code}")
-    if not promo: raise HTTPException(status_code=400, detail="Промокод не найден")
-    user = await firebase_get(f"users/{user_id}")
-    if not isinstance(user, dict): raise HTTPException(status_code=400, detail="Ошибка профиля")
-    cur = user.get("balance", 0)
-    if not isinstance(cur, (int, float)): cur = 0
-    new_balance = round(cur + promo.get("reward_stars", 50), 2)
-    await firebase_patch(f"users/{user_id}", {"balance": new_balance})
-    return {"status": "ok", "message": f"Начислено {promo.get('reward_stars', 50)} ★", "new_balance": new_balance}
+# ============ MAIN ============
 
-@app.get("/api/chat/history")
-async def get_chat_history():
-    msgs = await firebase_get("chat_messages")
-    return {"messages": list(msgs.values())[-50:] if isinstance(msgs, dict) else []}
-
-@app.websocket("/ws/chat")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    try:
-        while True:
-            data = await websocket.receive_text()
-            payload = json.loads(data)
-            msg_data = {"user_id": payload["user_id"], "first_name": payload["first_name"], "text": payload["text"]}
-            await http_client.post(f"{FIREBASE_DB_URL}/chat_messages.json", json=msg_data)
-            await manager.broadcast(msg_data)
-    except WebSocketDisconnect: manager.disconnect(websocket)
-    except Exception: manager.disconnect(websocket)
-    finally: manager.disconnect(websocket)
-
-@dp.pre_checkout_query()
-async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-@dp.message(F.successful_payment)
-async def process_successful_payment(message: types.Message):
-    payload = message.successful_payment.invoice_payload
-    if payload.startswith("topup_"):
-        parts = payload.split("_")
-        user_id, amount = parts[1], int(parts[2])
-        user = await firebase_get(f"users/{user_id}")
-        if isinstance(user, dict):
-            cur = user.get("balance", 0)
-            if not isinstance(cur, (int, float)): cur = 0
-            await firebase_patch(f"users/{user_id}", {"balance": cur + amount})
-            await message.answer(f"✅ Баланс пополнен на {amount} ★!")
-
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚽ Открыть WinStars", web_app=WebAppInfo(url=WEBAPP_URL))]])
-    await message.answer("👋 Добро пожаловать в **WinStars**!", reply_markup=kb, parse_mode="Markdown")
+async def main():
+    t0 = time.time()
+    print("🔄 [Scraper] Запуск (Fonbet — только логотипы)...")
+    
+    now_ts = int(time.time())
+    seven_days = 7 * 86400
+    
+    raw_cache = await firebase_get("team_logos") or {}
+    logo_cache = _cache_from_fb(raw_cache)
+    team_logo_idx = build_team_logo_index(logo_cache)
+    print(f"📥 В кэше логотипов: {len(logo_cache)} (уникальных: {len(team_logo_idx)})")
+    
+    line_data = fetch_fonbet_data(FONBET_BASE + FONBET_LINE_PATH)
+    live_data = fetch_fonbet_data(FONBET_BASE + FONBET_LIVE_PATH)
+    
+    if not line_data and not live_data:
+        print("❌ Не удалось загрузить данные Fonbet.")
+        return
+    
+    events_by_id = {}
+    all_sports = []
+    
+    for data in [line_data, live_data]:
+        if not data: continue
+        events = data.get("events", [])
+        sports_list = data.get("sports", [])
+        all_sports.extend(sports_list)
+        for ev in events:
+            eid = ev.get("id")
+            if eid and eid not in events_by_id:
+                events_by_id[eid] = dict(ev)
+    
+    all_events = list(events_by_id.values())
+    print(f"⚽ Всего событий: {len(all_events)}")
+    
+    entry_by_id, parent_by_id, top_by_id = _build_sport_hierarchy(all_sports)
+    
+    tournament_by_id = {}
+    for sp in all_sports:
+        if sp.get('kind') == 'sport': continue
+        sid = sp.get('id'); nm = sp.get('name', '')
+        if sid and nm: tournament_by_id[sid] = nm
+    
+    valid_events = []
+    for ev in all_events:
+        if ev.get("rootKind") != 1 or ev.get("kind") != 1: continue
+        t1 = ev.get("team1", ""); t2 = ev.get("team2", "")
+        if not t1 or not t2: continue
+        st = _parse_start_ts(ev)
+        if st <= 0: continue
+        sid = ev.get("sportId")
+        top_sport = top_by_id.get(sid)
+        if not top_sport: continue
+        sport_name = (top_sport.get('name') or '').lower()
+        if sport_name not in ('футбол', 'football', 'soccer'): continue
+        if st < now_ts - int(3.5 * 3600): continue
+        if st > now_ts + seven_days: continue
+        league = tournament_by_id.get(sid, "")
+        text = f"{t1} {t2}".lower()
+        if any(word in text for word in BLACKLIST_WORDS): continue
+        if not is_allowed_league(league): continue
+        valid_events.append((ev, league))
+    
+    print(f"🎯 Валидных матчей: {len(valid_events)}")
+    
+    teams_to_check = set()
+    for ev, lg in valid_events:
+        teams_to_check.add((ev.get("team1"), lg))
+        teams_to_check.add((ev.get("team2"), lg))
+    
+    teams_to_search = set()
+    for t, league in teams_to_check:
+        if not t: continue
+        if t in FOTMOB_ID_OVERRIDES or t in DIRECT_LOGO_URLS: continue
+        if team_logo_idx.get(t): continue
+        teams_to_search.add((t, league))
+    
+    print(f"🔍 Новых команд для логотипов: {len(teams_to_search)}")
+    if teams_to_search:
+        teams_list = list({t for t, _ in teams_to_search})
+        name_en_map = batch_translate_ru_to_en(teams_list)
+        await search_all_logos(list(teams_to_search), logo_cache, name_en_map)
+        await firebase_put("team_logos", _cache_to_fb(logo_cache))
+        print(f"💾 Сохранено логотипов: {len(logo_cache)}")
+    
+    print(f"⏱ Время: {time.time()-t0:.1f}s")
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("SERVER_PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port, workers=1, log_level="warning")
+    asyncio.run(main())
