@@ -24,7 +24,7 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
-# Только валидные для oddsharvester слаги (проверено stderr)
+# ✅ ИСПРАВЛЕННЫЕ СЛАГИ (сверено с sport_league_constants.py)
 ODDSPORTAL_LEAGUES = [
     "england-premier-league",
     "spain-laliga",
@@ -32,8 +32,12 @@ ODDSPORTAL_LEAGUES = [
     "germany-bundesliga",
     "france-ligue-1",
     "russia-premier-league",
+    "eredivisie",                # было netherlands-eredivisie
+    "liga-portugal",             # было portugal-liga-portugal
     "brazil-serie-a",
     "usa-mls",
+    "champions-league",          # было europe-champions-league
+    "europa-league",             # было europe-europa-league
 ]
 
 BLACKLIST_WORDS = [
@@ -444,7 +448,7 @@ def find_logo(cache, team, hint):
 # ============ ODDSHARVESTER ============
 
 def fetch_full_odds_via_oddsharvester():
-    """Парсит OddsPortal по валидным топ-лигам одним вызовом."""
+    """Парсит OddsPortal по всем топ-лигам одним вызовом."""
     print("📥 Запускаю OddsHarvester для сбора полной росписи...")
     
     markets = "1x2,btts,over_under,asian_handicap,double_chance,dnb"
@@ -501,7 +505,6 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
     if not odd_data:
         return result
     
-    # debug — что реально пришло в первом матче
     if odd_data:
         sample = odd_data[0]
         print(f"   🔍 sample keys: {list(sample.keys())}")
@@ -522,7 +525,6 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
     
     matched_count = 0
     for match in odd_data:
-        # oddsharvester возвращает home_team/away_team или home/away
         home = (match.get("home_team") or match.get("home") or match.get("homeTeam") or "").strip()
         away = (match.get("away_team") or match.get("away") or match.get("awayTeam") or "").strip()
         
@@ -549,9 +551,7 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
         markets = {}
         odds_list = match.get("odds") or []
         
-        # odds может быть dict (если рынки по ключам) или list
         if isinstance(odds_list, dict):
-            # превращаем в плоский список
             flat = []
             for market_name, market_val in odds_list.items():
                 if isinstance(market_val, dict):
