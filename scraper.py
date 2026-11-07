@@ -25,18 +25,18 @@ FOTMOB_HEADERS = {
 }
 
 ODDSPORTAL_LEAGUES = [
-    "england/premier-league",
-    "spain/laliga",
-    "italy/serie-a",
-    "germany/bundesliga",
-    "france/ligue-1",
-    "russia/premier-league",
-    "netherlands/eredivisie",
-    "portugal/liga-portugal",
-    "brazil/serie-a",
-    "usa/mls",
-    "europe/champions-league",
-    "europe/europa-league",
+    "england-premier-league",
+    "spain-laliga",
+    "italy-serie-a",
+    "germany-bundesliga",
+    "france-ligue-1",
+    "russia-premier-league",
+    "netherlands-eredivisie",
+    "portugal-liga-portugal",
+    "brazil-serie-a",
+    "usa-mls",
+    "europe-champions-league",
+    "europe-europa-league",
 ]
 
 BLACKLIST_WORDS = [
@@ -447,52 +447,53 @@ def find_logo(cache, team, hint):
 # ============ ODDSHARVESTER ИНТЕГРАЦИЯ ============
 
 def fetch_full_odds_via_oddsharvester():
-    """Парсит OddsPortal по каждой топ-лиге отдельно."""
+    """Парсит OddsPortal по всем топ-лигам одним вызовом."""
     print("📥 Запускаю OddsHarvester для сбора полной росписи...")
     
-    all_data = []
     markets = "1x2,btts,over_under,asian_handicap,double_chance,dnb"
-    successful_leagues = 0
+    leagues_joined = ",".join(ODDSPORTAL_LEAGUES)
+    output_file = Path("/tmp/oddsharvester_output.json")
     
-    for league_url in ODDSPORTAL_LEAGUES:
-        safe_name = league_url.replace("/", "_")
-        output_file = Path(f"/tmp/odd_{safe_name}.json")
+    cmd = [
+        "oddsharvester", "upcoming",
+        "-s", "football",
+        "-l", leagues_joined,
+        "-m", markets,
+        "--headless",
+        "--format", "json",
+        "-o", str(output_file),
+    ]
+    
+    print(f"   🚀 Лиг в запросе: {len(ODDSPORTAL_LEAGUES)}")
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1500)
         
-        cmd = [
-            "oddsharvester", "upcoming",
-            "-s", "football",
-            "-l", league_url,
-            "-m", markets,
-            "--headless",
-            "--format", "json",
-            "-o", str(output_file),
-        ]
+        if result.returncode != 0:
+            print(f"   ⚠️ OddsHarvester exit code: {result.returncode}")
+            print(f"   stderr: {(result.stderr or '')[:500]}")
+            return []
         
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if not output_file.exists():
+            print("   ⚠️ Файл вывода не создан")
+            return []
+        
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        if isinstance(data, list):
+            print(f"   ✅ OddsHarvester собрал данные для {len(data)} матчей")
+            return data
+        else:
+            print(f"   ⚠️ Неожиданный тип данных: {type(data).__name__}")
+            return []
             
-            if result.returncode == 0 and output_file.exists():
-                try:
-                    with open(output_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if isinstance(data, list):
-                        all_data.extend(data)
-                        successful_leagues += 1
-                        print(f"   ✅ {league_url}: {len(data)} матчей")
-                    else:
-                        print(f"   ⚠️ {league_url}: тип {type(data).__name__}, не список")
-                except Exception as e:
-                    print(f"   ⚠️ {league_url}: JSON parse error: {str(e)[:100]}")
-            else:
-                stderr = (result.stderr or "")[:200].replace("\n", " ")
-                print(f"   ⚠️ {league_url}: code={result.returncode} | {stderr}")
-        except subprocess.TimeoutExpired:
-            print(f"   ⚠️ {league_url}: timeout (120s)")
-        except Exception as e:
-            print(f"   ⚠️ {league_url}: {str(e)[:100]}")
-    
-    print(f"   📊 Итого: {len(all_data)} матчей из {successful_leagues} лиг")
-    return all_data
+    except subprocess.TimeoutExpired:
+        print("   ⚠️ OddsHarvester timeout (25 минут)")
+        return []
+    except Exception as e:
+        print(f"   ⚠️ OddsHarvester error: {e}")
+        return []
 
 
 def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
