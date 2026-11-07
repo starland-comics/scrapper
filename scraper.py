@@ -24,6 +24,21 @@ FOTMOB_HEADERS = {
     "Referer": "https://www.fotmob.com/"
 }
 
+ODDSPORTAL_LEAGUES = [
+    "england/premier-league",
+    "spain/laliga",
+    "italy/serie-a",
+    "germany/bundesliga",
+    "france/ligue-1",
+    "russia/premier-league",
+    "netherlands/eredivisie",
+    "portugal/liga-portugal",
+    "brazil/serie-a",
+    "usa/mls",
+    "europe/champions-league",
+    "europe/europa-league",
+]
+
 BLACKLIST_WORDS = [
     "люб", "жен", "мол", "дубл", "резерв", "академ",
     "до 15", "до 16", "до 17", "до 18", "до 19", "до 20", "до 21", "до 23",
@@ -432,61 +447,61 @@ def find_logo(cache, team, hint):
 # ============ ODDSHARVESTER ИНТЕГРАЦИЯ ============
 
 def fetch_full_odds_via_oddsharvester():
-    """Запускает OddsHarvester CLI для получения полной росписи live-матчей."""
+    """Парсит OddsPortal по каждой топ-лиге отдельно."""
     print("📥 Запускаю OddsHarvester для сбора полной росписи...")
     
-    output_file = Path("/tmp/oddsharvester_output.json")
-    
-    # Собираем рынки: 1x2, btts, over/under, asian handicap, double chance, draw no bet
+    all_data = []
     markets = "1x2,btts,over_under,asian_handicap,double_chance,dnb"
+    successful_leagues = 0
     
-    cmd = [
-        "oddsharvester", "live",
-        "-s", "football",
-        "-m", markets,
-        "--headless",
-        "--format", "json",
-        "-o", str(output_file)
-    ]
+    for league_url in ODDSPORTAL_LEAGUES:
+        safe_name = league_url.replace("/", "_")
+        output_file = Path(f"/tmp/odd_{safe_name}.json")
+        
+        cmd = [
+            "oddsharvester", "upcoming",
+            "-s", "football",
+            "-l", league_url,
+            "-m", markets,
+            "--headless",
+            "--format", "json",
+            "-o", str(output_file),
+        ]
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            
+            if result.returncode == 0 and output_file.exists():
+                try:
+                    with open(output_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if isinstance(data, list):
+                        all_data.extend(data)
+                        successful_leagues += 1
+                        print(f"   ✅ {league_url}: {len(data)} матчей")
+                    else:
+                        print(f"   ⚠️ {league_url}: тип {type(data).__name__}, не список")
+                except Exception as e:
+                    print(f"   ⚠️ {league_url}: JSON parse error: {str(e)[:100]}")
+            else:
+                stderr = (result.stderr or "")[:200].replace("\n", " ")
+                print(f"   ⚠️ {league_url}: code={result.returncode} | {stderr}")
+        except subprocess.TimeoutExpired:
+            print(f"   ⚠️ {league_url}: timeout (120s)")
+        except Exception as e:
+            print(f"   ⚠️ {league_url}: {str(e)[:100]}")
     
-    print(f"   🚀 Команда: {' '.join(cmd)}")
-    
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        
-        if result.returncode != 0:
-            print(f"   ⚠️ OddsHarvester exit code: {result.returncode}")
-            print(f"   stderr: {result.stderr[:500]}")
-            return {}
-        
-        if not output_file.exists():
-            print("   ⚠️ Файл вывода не создан")
-            return {}
-        
-        with open(output_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        print(f"   ✅ OddsHarvester собрал данные для {len(data)} матчей")
-        return data
-        
-    except subprocess.TimeoutExpired:
-        print("   ⚠️ OddsHarvester timeout (10 минут)")
-        return {}
-    except Exception as e:
-        print(f"   ⚠️ OddsHarvester error: {e}")
-        return {}
+    print(f"   📊 Итого: {len(all_data)} матчей из {successful_leagues} лиг")
+    return all_data
+
 
 def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
-    """
-    Парсит вывод OddsHarvester и матчит с матчами Olimpbet.
-    Возвращает словарь {olimp_ev_id: {group: [{name, odds}]}}
-    """
+    """Парсит вывод OddsHarvester и матчит с матчами Olimpbet."""
     result = {}
-    
     if not odd_data:
         return result
     
-    # Строим индекс матчей Olimpbet по нормализованным названиям команд
+    # Индекс матчей Olimpbet по нормализованным названиям
     olimp_index = []
     for ev_id, (ev, status, league) in unique_matches.items():
         t1_ru = ev.get("team1Name", "")
@@ -499,8 +514,8 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
             "away_norm": _normalize(t2_en),
         })
     
+    matched_count = 0
     for match in odd_data:
-        # OddsHarvester возвращает поля home_team, away_team, odds
         home = (match.get("home_team") or match.get("home") or "").strip()
         away = (match.get("away_team") or match.get("away") or "").strip()
         
@@ -509,7 +524,6 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
         home_norm = _normalize(home)
         away_norm = _normalize(away)
         
-        # Ищем совпадение по названиям команд
         best_ev_id = None
         best_score = 0
         
@@ -525,7 +539,6 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
         if not best_ev_id:
             continue
         
-        # Парсим рынки
         markets = {}
         odds_list = match.get("odds") or []
         
@@ -539,7 +552,6 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
             except: continue
             if price <= 1.0: continue
             
-            # Маппинг рынков
             group_name = None
             mlow = market_name.lower()
             
@@ -558,7 +570,7 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
                 group_name = "Фора"
             elif "double chance" in mlow:
                 group_name = "Двойной шанс"
-            elif "draw no bet" in mlow:
+            elif "dnb" in mlow or "draw no bet" in mlow:
                 group_name = "Ничья не в счет"
             
             if not group_name: continue
@@ -570,7 +582,9 @@ def parse_oddsharvester_output(odd_data, unique_matches, name_en_map):
         
         if markets:
             result[best_ev_id] = markets
+            matched_count += 1
     
+    print(f"   🔗 Сматчено матчей: {matched_count}/{len(odd_data)}")
     return result
 
 
@@ -757,7 +771,7 @@ async def main():
     print(f"🔤 Перевожу {len(teams_ru)} названий команд...")
     name_en_map = batch_translate_ru_to_en(list(teams_ru))
 
-    # OddsHarvester: полная роспись для live-матчей
+    # OddsHarvester: полная роспись
     odd_data = fetch_full_odds_via_oddsharvester()
     odds_map = parse_oddsharvester_output(odd_data, unique_matches, name_en_map)
     print(f"✅ Получено полных росписей с OddsHarvester: {len(odds_map)}")
@@ -814,7 +828,6 @@ async def main():
             odd_markets = odds_map[ev_id]
             for gn, outs in odd_markets.items():
                 if outs: markets_data[gn] = outs
-            # Обновляем 1x2, если есть
             if "Исход" in odd_markets:
                 for o in odd_markets["Исход"]:
                     if o["name"] == "П1": p1 = o["odds"]
